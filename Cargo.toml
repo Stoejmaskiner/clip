@@ -7,6 +7,9 @@ license = "GPL-3.0-or-later"
 homepage = "https://stoejmaskiner.github.io"
 description = "Simple ergonomic clipper"
 
+[features]
+draw_gizmos = []
+
 [workspace]
 members = ["xtask"]
 

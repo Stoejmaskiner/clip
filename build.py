@@ -77,7 +77,7 @@ def run():
 
 @functools.cache
 def debug():
-    subprocess.run(["cargo", "run"])
+    subprocess.run(["cargo", "run", "--features", "draw_gizmos"])
 
 
 @functools.cache

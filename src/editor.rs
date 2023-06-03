@@ -15,7 +15,25 @@ impl Model for Data {}
 
 // Makes sense to also define this here, makes it a bit easier to keep track of
 pub(crate) fn default_state() -> Arc<ViziaState> {
-    ViziaState::new(|| (572, 174))
+    ViziaState::new(|| (400, 400))
+}
+
+macro_rules! vspace {
+    ($cx: expr, $height: expr) => {{
+        let handle = Element::new($cx).height(Pixels($height));
+
+        #[cfg(feature = "draw_gizmos")]
+        {
+            let handle = handle
+                .border_width(Pixels(1.0))
+                .border_color(Color::rgb(255, 0, 0));
+            handle
+        }
+        #[cfg(not(feature = "draw_gizmos"))]
+        {
+            handle
+        }
+    }};
 }
 
 pub(crate) fn create(
@@ -37,88 +55,50 @@ pub(crate) fn create(
             // left column
             VStack::new(cx, |cx| {
                 Label::new(cx, "Bypass");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 3.0);
                 ParamButton::new(cx, Data::params, |params| &params.bypass);
-                Element::new(cx)
-                    .height(Pixels(6.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 6.0);
                 Label::new(cx, "Pre Gain");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 3.0);
                 ParamSlider::new(cx, Data::params, |params| &params.pre_gain);
-                Element::new(cx)
-                    .height(Pixels(6.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 6.0);
                 Label::new(cx, "Post Gain");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 3.0);
                 ParamSlider::new(cx, Data::params, |params| &params.post_gain);
+                vspace!(cx, 6.0);
+                Label::new(cx, "Hardness");
+                vspace!(cx, 3.0);
+                ParamSlider::new(cx, Data::params, |params| &params.hardness);
             })
             .border_width(Pixels(1.0))
             .border_color(Color::rgb(255, 0, 0));
 
             // center column
             VStack::new(cx, |cx| {
-                Label::new(cx, "Hardness");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
-                ParamSlider::new(cx, Data::params, |params| &params.hardness);
-                Element::new(cx)
-                    .height(Pixels(6.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
                 Label::new(cx, "Drive");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 3.0);
                 ParamSlider::new(cx, Data::params, |params| &params.drive);
-                Element::new(cx)
-                    .height(Pixels(6.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 6.0);
                 Label::new(cx, "Threshold");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 3.0);
                 ParamSlider::new(cx, Data::params, |params| &params.threshold);
-            })
-            .border_width(Pixels(1.0))
-            .border_color(Color::rgb(255, 0, 0));
-
-            // right column
-            VStack::new(cx, |cx| {
+                vspace!(cx, 6.0);
                 Label::new(cx, "Mix");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 3.0);
                 ParamSlider::new(cx, Data::params, |params| &params.mix);
-                Element::new(cx)
-                    .height(Pixels(6.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 6.0);
                 Label::new(cx, "DC Block");
-                Element::new(cx)
-                    .height(Pixels(3.0))
-                    .border_width(Pixels(1.0))
-                    .border_color(Color::rgb(255, 0, 0));
+                vspace!(cx, 3.0);
                 ParamButton::new(cx, Data::params, |params| &params.dc_block);
             })
             .border_width(Pixels(1.0))
             .border_color(Color::rgb(255, 0, 0));
+
+            Element::new(cx)
+                .width(Pixels(100.0))
+                .height(Stretch(1.0))
+                .border_color(Color::rgb(255, 0, 0))
+                .border_width(Pixels(1.0));
         })
         .width(Auto)
         .height(Auto)
