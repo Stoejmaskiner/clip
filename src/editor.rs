@@ -1,19 +1,14 @@
-use array_macro;
-use atomic_float::AtomicF32;
-use nih_plug::prelude::{util, Editor};
+use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::widgets::*;
 use nih_plug_vizia::{assets, create_vizia_editor, ViziaState, ViziaTheming};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::ClipParams;
 
 #[derive(Lens)]
 struct Data {
     params: Arc<ClipParams>,
-    peak_meter: Arc<AtomicF32>,
 }
 
 impl Model for Data {}
@@ -25,7 +20,6 @@ pub(crate) fn default_state() -> Arc<ViziaState> {
 
 pub(crate) fn create(
     params: Arc<ClipParams>,
-    peak_meter: Arc<AtomicF32>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
@@ -34,13 +28,12 @@ pub(crate) fn create(
 
         Data {
             params: params.clone(),
-            peak_meter: peak_meter.clone(),
         }
         .build(cx);
 
         ResizeHandle::new(cx);
 
-        let hstack = HStack::new(cx, |cx| {
+        HStack::new(cx, |cx| {
             // left column
             VStack::new(cx, |cx| {
                 Label::new(cx, "Bypass");

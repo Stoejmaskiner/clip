@@ -1,5 +1,3 @@
-use nih_plug_vizia::vizia::input;
-
 /// variable hardness clipping. For hardness `h`, the range `[0, 0.935]` is normal.
 ///
 /// Due to issues with stability when `h` approaches 1, crossfades internally to a
@@ -27,6 +25,6 @@ impl DCBlock {
         let y = x - self.x_z1 + 0.9975 * self.y_z1;
         self.x_z1 = x;
         self.y_z1 = y;
-        return y;
+        y
     }
 }
