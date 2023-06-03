@@ -1,0 +1,5 @@
+vst3_location = "~/Plugins/VST3"
+clap_location = "~/Plugins/CLAP"
+run_command = "bitwig-studio"
+
+[dev-packages.ubuntu]
