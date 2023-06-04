@@ -1,10 +1,15 @@
 use array_macro::array;
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use widgets::Plot1DData;
+
+use crate::math_utils::Lerpable;
 
 mod dsp;
 mod editor;
+mod math_utils;
+mod widgets;
 
 /// size of each "batch" of samples taken from a channel at a time, independent
 /// of host's buffer size.
@@ -14,6 +19,8 @@ const MAX_BLOCK_SIZE: usize = 64;
 /// supports stereo lmao)
 const NUM_CHANNELS: usize = 2;
 
+const PEAK_METER_DECAY_MS: f64 = 650.0;
+
 // This is a shortened version of the gain example with most comments removed, check out
 // https://github.com/robbert-vdh/nih-plug/blob/master/plugins/examples/gain/src/lib.rs to get
 // started
@@ -21,8 +28,16 @@ const NUM_CHANNELS: usize = 2;
 pub struct Clip {
     params: Arc<ClipParams>,
 
+    // === widgets ===
+    // TODO: consider RwLock instead
+    // TODO: consider a deadlock-free alternative
+    plot: Arc<Mutex<Plot1DData<128>>>,
+
     // === processors ===
     dc_blocker: [dsp::DCBlock; NUM_CHANNELS],
+
+    // === state ===
+    peak_meter_decay_weight: f32,
 }
 
 #[derive(Enum, PartialEq)]
@@ -72,7 +87,9 @@ impl Default for Clip {
     fn default() -> Self {
         Self {
             params: Arc::new(ClipParams::default()),
+            plot: Arc::new(Mutex::new(Plot1DData::new())),
             dc_blocker: array![dsp::DCBlock::default(); NUM_CHANNELS],
+            peak_meter_decay_weight: 1.0,
         }
     }
 }
@@ -210,18 +227,29 @@ impl Plugin for Clip {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.params.editor_state.clone())
+        editor::create(
+            self.params.clone(),
+            self.plot.clone(),
+            self.params.editor_state.clone(),
+        )
     }
 
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
-        _buffer_config: &BufferConfig,
+        buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         // Resize buffers and perform other potentially expensive initialization operations here.
         // The `reset()` function is always called right after this function. You can remove this
         // function if you do not need it.
+
+        self.plot.lock().unwrap().xlim = (0.0, 1.0);
+        self.plot.lock().unwrap().ylim = (0.0, 1.0);
+
+        self.peak_meter_decay_weight = 0.25f64
+            .powf((buffer_config.sample_rate as f64 * PEAK_METER_DECAY_MS / 1000.0).recip())
+            as f32;
 
         true
     }
@@ -242,54 +270,87 @@ impl Plugin for Clip {
             for channel_samples in block.iter_samples() {
                 // TODO: deciding whether to bypass is done once per block to keep the branching
                 //       outside of the main loop
-                let bypass = self.params.bypass.value();
-                if !bypass {
-                    let pre_gain = self.params.pre_gain.smoothed.next();
-                    let post_gain = self.params.post_gain.smoothed.next();
-                    let hardness = self.params.hardness.smoothed.next();
-                    let drive = self.params.drive.smoothed.next();
-                    let threshold = self.params.threshold.smoothed.next();
-                    let mix = self.params.mix.smoothed.next();
-                    let dc_block = self.params.dc_block.value();
-
-                    // There are two main approaches to gain compensation, the first is to
-                    // divide the post-clipping by the drive amount. This approaches -inf dB
-                    // with infinite drive. This works well for small drive values, but
-                    // overcompensates for high dirve values.
-                    //
-                    // The other approach is to divide the post-clipping by the clipped drive
-                    // amount. This approaches +0dB with infinite drive. It undercompensates for
-                    // high drive, but works well for small drives.
-                    //
-                    // This approach averages the two main approaches, with the weighting
-                    // tuned by hand so that volume approaches -6.0dB. This is the same
-                    // behavior you see in Fab Filter's "Saturn" plugin.
-                    const CALIBRATION: f32 = 0.9319508;
-                    const INV_CALIBRATION: f32 = 1.0 - CALIBRATION;
-                    let drive_compensation =
-                        dsp::var_hard_clip(drive, hardness) * CALIBRATION + drive * INV_CALIBRATION;
-
-                    for (chan, sample) in channel_samples.into_iter().enumerate() {
-                        // TODO: branchless?
-                        if dc_block {
-                            *sample = self.dc_blocker[chan].step(*sample);
-                        }
-
-                        let dry = *sample;
-
-                        *sample *= pre_gain;
-
-                        *sample *= drive;
-                        *sample /= threshold;
-                        *sample = dsp::var_hard_clip(*sample, hardness);
-                        *sample *= threshold;
-                        *sample /= drive_compensation;
-
-                        *sample *= post_gain;
-
-                        *sample = mix * *sample + (1.0 - mix) * dry;
-                    }
+                if self.params.bypass.value() {
+                    return ProcessStatus::Normal;
                 }
+
+                let pre_gain = self.params.pre_gain.smoothed.next();
+                let post_gain = self.params.post_gain.smoothed.next();
+                let hardness = self.params.hardness.smoothed.next();
+                let drive = self.params.drive.smoothed.next();
+                let threshold = self.params.threshold.smoothed.next();
+                let mix = self.params.mix.smoothed.next();
+                let dc_block = self.params.dc_block.value();
+
+                // There are two main approaches to gain compensation, the first is to
+                // divide the post-clipping by the drive amount. This approaches -inf dB
+                // with infinite drive. This works well for small drive values, but
+                // overcompensates for high dirve values.
+                //
+                // The other approach is to divide the post-clipping by the clipped drive
+                // amount. This approaches +0dB with infinite drive. It undercompensates for
+                // high drive, but works well for small drives.
+                //
+                // This approach averages the two main approaches, with the weighting
+                // tuned by hand so that volume approaches -6.0dB. This is the same
+                // behavior you see in Fab Filter's "Saturn" plugin.
+                const CALIBRATION: f32 = 0.9319508;
+                const INV_CALIBRATION: f32 = 1.0 - CALIBRATION;
+                let drive_compensation =
+                    dsp::var_hard_clip(drive, hardness) * CALIBRATION + drive * INV_CALIBRATION;
+
+                // TODO: put this somewhere else
+                let main_nonlinearity = |x| {
+                    let dry = x;
+                    let mut y = x;
+                    y *= pre_gain;
+                    y *= drive;
+                    y /= threshold;
+                    y = dsp::var_hard_clip(y, hardness);
+                    y *= threshold;
+                    y /= drive_compensation;
+                    y *= post_gain;
+                    y = dry.lerp(y, mix);
+                    y
+                };
+
+                let mut in_amp_sum = 0.0;
+                let mut out_amp_sum = 0.0;
+
+                for (chan, sample) in channel_samples.into_iter().enumerate() {
+                    // TODO: branchless?
+                    if dc_block {
+                        *sample = self.dc_blocker[chan].step(*sample);
+                    }
+
+                    in_amp_sum += *sample;
+                    *sample = main_nonlinearity(*sample);
+                    out_amp_sum += *sample;
+                }
+
+                if !self.params.editor_state.is_open() {
+                    return ProcessStatus::Normal;
+                }
+
+                let in_amp = in_amp_sum.abs() / block.channels() as f32;
+                let out_amp = out_amp_sum.abs() / block.channels() as f32;
+
+                // TODO: this is really really bad for performance, almost on purpose
+                //       because I want to track the performance gains when optimizing
+                let mut plot = self.plot.lock().unwrap();
+                plot.in_amp = if in_amp > plot.in_amp {
+                    in_amp
+                } else {
+                    plot.in_amp * self.peak_meter_decay_weight
+                        + in_amp * (1.0 - self.peak_meter_decay_weight)
+                };
+                plot.out_amp = if out_amp > plot.out_amp {
+                    out_amp
+                } else {
+                    plot.out_amp * self.peak_meter_decay_weight
+                        + out_amp * (1.0 - self.peak_meter_decay_weight)
+                };
+                plot.plot_function(main_nonlinearity);
             }
         }
 

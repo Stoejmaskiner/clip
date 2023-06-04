@@ -1,7 +1,7 @@
 /// variable hardness clipping. For hardness `h`, the range `[0, 0.935]` is normal.
 ///
 /// Due to issues with stability when `h` approaches 1, crossfades internally to a
-/// digital hard clip after 0.99.
+/// digital hard clip after 0.935.
 pub fn var_hard_clip(x: f32, hardness: f32) -> f32 {
     let clamped_hardness = hardness.min(0.935);
     let fade = (hardness - clamped_hardness) / (1.0 - 0.935);

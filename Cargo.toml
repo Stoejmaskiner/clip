@@ -9,6 +9,7 @@ description = "Simple ergonomic clipper"
 
 [features]
 draw_gizmos = []
+profile = []
 
 [workspace]
 members = ["xtask"]
@@ -29,6 +30,8 @@ nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 # nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default_features = false, features = ["assert_process_allocs"] }
 atomic_float = "0.1"
 array-macro = "2.1.5"
+num-traits = "0.2.15"
+static_assertions = "1.1.0"
 
 [profile.release]
 lto = "thin"

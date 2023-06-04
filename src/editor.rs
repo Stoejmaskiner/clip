@@ -1,10 +1,10 @@
+use crate::widgets::{Plot1D, Plot1DData};
+use crate::ClipParams;
 use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::widgets::*;
 use nih_plug_vizia::{assets, create_vizia_editor, ViziaState, ViziaTheming};
-use std::sync::Arc;
-
-use crate::ClipParams;
+use std::sync::{Arc, Mutex};
 
 #[derive(Lens)]
 struct Data {
@@ -15,7 +15,7 @@ impl Model for Data {}
 
 // Makes sense to also define this here, makes it a bit easier to keep track of
 pub(crate) fn default_state() -> Arc<ViziaState> {
-    ViziaState::new(|| (400, 400))
+    ViziaState::new(|| (800, 400))
 }
 
 macro_rules! vspace {
@@ -36,8 +36,24 @@ macro_rules! vspace {
     }};
 }
 
-pub(crate) fn create(
+macro_rules! with_gizmos {
+    {$block: expr} => {
+        #[cfg(feature = "draw_gizmos")]
+        {
+            $block
+                .border_width(Pixels(1.0))
+                .border_color(Color::rgb(0xff, 0, 0));
+        }
+        #[cfg(not(feature = "draw_gizmos"))]
+        {
+            $block
+        }
+    };
+}
+
+pub(crate) fn create<const N: usize>(
     params: Arc<ClipParams>,
+    plot: Arc<Mutex<Plot1DData<N>>>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
@@ -53,52 +69,61 @@ pub(crate) fn create(
 
         HStack::new(cx, |cx| {
             // left column
-            VStack::new(cx, |cx| {
-                Label::new(cx, "Bypass");
-                vspace!(cx, 3.0);
-                ParamButton::new(cx, Data::params, |params| &params.bypass);
-                vspace!(cx, 6.0);
-                Label::new(cx, "Pre Gain");
-                vspace!(cx, 3.0);
-                ParamSlider::new(cx, Data::params, |params| &params.pre_gain);
-                vspace!(cx, 6.0);
-                Label::new(cx, "Post Gain");
-                vspace!(cx, 3.0);
-                ParamSlider::new(cx, Data::params, |params| &params.post_gain);
-                vspace!(cx, 6.0);
-                Label::new(cx, "Hardness");
-                vspace!(cx, 3.0);
-                ParamSlider::new(cx, Data::params, |params| &params.hardness);
-            })
-            .border_width(Pixels(1.0))
-            .border_color(Color::rgb(255, 0, 0));
+            with_gizmos! {
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "Bypass");
+                    vspace!(cx, 3.0);
+                    ParamButton::new(cx, Data::params, |params| &params.bypass);
+                    vspace!(cx, 6.0);
+                    Label::new(cx, "Pre Gain");
+                    vspace!(cx, 3.0);
+                    ParamSlider::new(cx, Data::params, |params| &params.pre_gain);
+                    vspace!(cx, 6.0);
+                    Label::new(cx, "Post Gain");
+                    vspace!(cx, 3.0);
+                    ParamSlider::new(cx, Data::params, |params| &params.post_gain);
+                    vspace!(cx, 6.0);
+                    Label::new(cx, "Hardness");
+                    vspace!(cx, 3.0);
+                    ParamSlider::new(cx, Data::params, |params| &params.hardness);
+                })
+            };
 
             // center column
-            VStack::new(cx, |cx| {
-                Label::new(cx, "Drive");
-                vspace!(cx, 3.0);
-                ParamSlider::new(cx, Data::params, |params| &params.drive);
-                vspace!(cx, 6.0);
-                Label::new(cx, "Threshold");
-                vspace!(cx, 3.0);
-                ParamSlider::new(cx, Data::params, |params| &params.threshold);
-                vspace!(cx, 6.0);
-                Label::new(cx, "Mix");
-                vspace!(cx, 3.0);
-                ParamSlider::new(cx, Data::params, |params| &params.mix);
-                vspace!(cx, 6.0);
-                Label::new(cx, "DC Block");
-                vspace!(cx, 3.0);
-                ParamButton::new(cx, Data::params, |params| &params.dc_block);
-            })
-            .border_width(Pixels(1.0))
-            .border_color(Color::rgb(255, 0, 0));
+            with_gizmos! {
+                VStack::new(cx, |cx| {
+                    Label::new(cx, "Drive");
+                    vspace!(cx, 3.0);
+                    ParamSlider::new(cx, Data::params, |params| &params.drive);
+                    vspace!(cx, 6.0);
+                    Label::new(cx, "Threshold");
+                    vspace!(cx, 3.0);
+                    ParamSlider::new(cx, Data::params, |params| &params.threshold);
+                    vspace!(cx, 6.0);
+                    Label::new(cx, "Mix");
+                    vspace!(cx, 3.0);
+                    ParamSlider::new(cx, Data::params, |params| &params.mix);
+                    vspace!(cx, 6.0);
+                    Label::new(cx, "DC Block");
+                    vspace!(cx, 3.0);
+                    ParamButton::new(cx, Data::params, |params| &params.dc_block);
+                })
+            };
+            // .border_width(Pixels(1.0))
+            // .border_color(Color::rgb(255, 0, 0));
 
-            Element::new(cx)
-                .width(Pixels(100.0))
+            Plot1D::new(cx, plot.clone())
+                .outline_width(Pixels(2.0))
+                .width(Pixels(222.0))
                 .height(Stretch(1.0))
-                .border_color(Color::rgb(255, 0, 0))
-                .border_width(Pixels(1.0));
+                .outline_color(Color::black())
+                .border_width(Pixels(1.0))
+                .border_color(Color::black());
+            // Element::new(cx)
+            //     .width(Pixels(100.0))
+            //     .height(Stretch(1.0))
+            //     .border_color(Color::rgb(255, 0, 0))
+            //     .border_width(Pixels(1.0));
         })
         .width(Auto)
         .height(Auto)

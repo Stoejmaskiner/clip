@@ -23,7 +23,9 @@ def main():
     global args
     parser = ArgumentParser()
     parser.add_argument(
-        "actions", choices=["build", "deploy", "run", "debug", "dev-install"], nargs="+"
+        "actions",
+        choices=["build", "deploy", "run", "debug", "dev-install", "lint", "fix"],
+        nargs="+",
     )
 
     args = parser.parse_args()
@@ -40,6 +42,10 @@ def main():
                 run()
             case "debug":
                 debug()
+            case "lint":
+                lint()
+            case "fix":
+                fix()
             case _:
                 assert_never()
 
@@ -93,6 +99,16 @@ def dev_install():
             ]
             + dev_packages["Ubuntu"]
         )
+
+
+@functools.cache
+def lint():
+    subprocess.run(["cargo", "clippy", "--", "-W", "clippy::pedantic"])
+
+
+@functools.cache
+def fix():
+    subprocess.run(["cargo", "clippy", "--fix", "--", "-W", "clippy::pedantic"])
 
 
 if __name__ == "__main__":
