@@ -1,3 +1,6 @@
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_precision_loss)]
 use array_macro::array;
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
@@ -248,7 +251,7 @@ impl Plugin for Clip {
         self.plot.lock().unwrap().ylim = (0.0, 1.0);
 
         self.peak_meter_decay_weight = 0.25f64
-            .powf((buffer_config.sample_rate as f64 * PEAK_METER_DECAY_MS / 1000.0).recip())
+            .powf((f64::from(buffer_config.sample_rate) * PEAK_METER_DECAY_MS / 1000.0).recip())
             as f32;
 
         true
@@ -294,7 +297,7 @@ impl Plugin for Clip {
                 // This approach averages the two main approaches, with the weighting
                 // tuned by hand so that volume approaches -6.0dB. This is the same
                 // behavior you see in Fab Filter's "Saturn" plugin.
-                const CALIBRATION: f32 = 0.9319508;
+                const CALIBRATION: f32 = 0.931_950_8;
                 const INV_CALIBRATION: f32 = 1.0 - CALIBRATION;
                 let drive_compensation =
                     dsp::var_hard_clip(drive, hardness) * CALIBRATION + drive * INV_CALIBRATION;

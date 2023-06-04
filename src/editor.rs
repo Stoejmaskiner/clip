@@ -2,7 +2,7 @@ use crate::widgets::{Plot1D, Plot1DData};
 use crate::ClipParams;
 use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::widgets::*;
+use nih_plug_vizia::widgets::{ParamButton, ParamSlider, ResizeHandle};
 use nih_plug_vizia::{assets, create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::{Arc, Mutex};
 
