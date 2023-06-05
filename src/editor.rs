@@ -1,5 +1,5 @@
+use crate::params::ClipParams;
 use crate::widgets::{Plot1D, Plot1DData};
-use crate::ClipParams;
 use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::widgets::{ParamButton, ParamSlider, ResizeHandle};
