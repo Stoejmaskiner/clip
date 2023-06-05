@@ -53,7 +53,7 @@ macro_rules! with_gizmos {
 
 pub(crate) fn create<const N: usize>(
     params: Arc<ClipParams>,
-    plot: Arc<Mutex<Plot1DData<N>>>,
+    plot: Arc<Plot1DData<N>>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {

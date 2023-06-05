@@ -2,20 +2,23 @@
 
 use crate::math_utils::Lerpable;
 
+use array_macro::array;
+use atomic_float::AtomicF32;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::vizia::vg;
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::RwLock;
 
 /// Plot a 1D function or signal to the gui
 pub struct Plot1DData<const N: usize> {
-    pub ys: [f32; N],
-    pub ylim: (f32, f32),
-    pub xlim: (f32, f32),
-    pub draw_ticks: bool,
-    pub in_amp: f32,
-    pub out_amp: f32,
+    pub ys: RwLock<[f32; N]>,
+    pub ylim: (AtomicF32, AtomicF32),
+    pub xlim: (AtomicF32, AtomicF32),
+    pub in_amp: AtomicF32,
+    pub out_amp: AtomicF32,
 }
 
 impl<const N: usize> Plot1DData<N> {
@@ -28,26 +31,29 @@ impl<const N: usize> Plot1DData<N> {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_GUARD; // HACK: if omitted, rustc will just remove the assertion
         Self {
-            ys: [0.0; N],
-            ylim: (-1.0, 1.0),
-            xlim: (-1.0, 1.0),
-            // TODO: remove
-            draw_ticks: true,
-            in_amp: 0.0,
-            out_amp: 0.0,
+            ys: RwLock::new([0.0; N]),
+            ylim: (AtomicF32::new(-1.0), AtomicF32::new(1.0)),
+            xlim: (AtomicF32::new(-1.0), AtomicF32::new(1.0)),
+            in_amp: AtomicF32::new(0.0),
+            out_amp: AtomicF32::new(0.0),
         }
     }
 
     pub fn _clear(&mut self) {
-        for elem in self.ys.iter_mut() {
+        for elem in self.ys.write().unwrap().iter_mut() {
             *elem = 0.0;
         }
     }
 
-    pub fn plot_function(&mut self, f: impl Fn(f32) -> f32) {
+    pub fn plot_function(&self, f: impl Fn(f32) -> f32) {
+        let mut ys = self.ys.write().unwrap();
         for i in 0..N {
-            let x = self.xlim.0.lerp(self.xlim.1, i as f32 / N as f32);
-            self.ys[i] = f(x);
+            let x = self
+                .xlim
+                .0
+                .load(Ordering::Relaxed)
+                .lerp(self.xlim.1.load(Ordering::Relaxed), i as f32 / N as f32);
+            ys[i] = f(x);
         }
     }
 }
@@ -58,12 +64,12 @@ struct Plot1DAdditionalStyles {
 }
 
 pub struct Plot1D<const N: usize> {
-    data: Arc<Mutex<Plot1DData<N>>>,
+    data: Arc<Plot1DData<N>>,
     additional_styles: Plot1DAdditionalStyles,
 }
 
 impl<const N: usize> Plot1D<N> {
-    pub fn new(cx: &mut Context, data: Arc<Mutex<Plot1DData<N>>>) -> Handle<Self> {
+    pub fn new(cx: &mut Context, data: Arc<Plot1DData<N>>) -> Handle<Self> {
         Self {
             data,
             additional_styles: Plot1DAdditionalStyles {
@@ -78,11 +84,15 @@ impl<const N: usize> Plot1D<N> {
     /// helper that calculates the shape of the plot
     fn plot_path(&self, bx: f32, by: f32, bw: f32, bh: f32) -> vg::Path {
         let mut path = vg::Path::new();
-        let data = self.data.lock().unwrap();
-        let mut points = data.ys.iter().enumerate().map(|(x, y)| {
+        let ys = self.data.ys.read().unwrap();
+        let mut points = ys.iter().enumerate().map(|(x, y)| {
             // scale x and y from xlim, ylim space to screen space
             let x = bx + (x as f32) / ((N - 1) as f32) * bw;
-            let y = by + y.inverse_lerp(data.ylim.1, data.ylim.0) * bh;
+            let y = by
+                + y.inverse_lerp(
+                    self.data.ylim.1.load(Ordering::Relaxed),
+                    self.data.ylim.0.load(Ordering::Relaxed),
+                ) * bh;
             (x, y)
         });
         // this can't panic because we asserted that N >= 2 at compile time
@@ -97,13 +107,9 @@ impl<const N: usize> Plot1D<N> {
     /// helper that calculates the shape of the meter rectangle
     fn meter_path(&self, bx: f32, by: f32, bw: f32, bh: f32) -> vg::Path {
         let mut path = vg::Path::new();
-        let data = self.data.lock().unwrap();
-        path.rect(
-            bx,
-            by + bh - data.out_amp * bh,
-            data.in_amp * bw,
-            data.out_amp * bh,
-        );
+        let in_amp = self.data.in_amp.load(Ordering::Relaxed);
+        let out_amp = self.data.out_amp.load(Ordering::Relaxed);
+        path.rect(bx, by + bh - out_amp * bh, in_amp * bw, out_amp * bh);
         path
     }
 
@@ -115,20 +121,17 @@ impl<const N: usize> Plot1D<N> {
         let y_top = y_base - 8.0;
         let x_base = bx;
         let x_top = x_base + 8.0;
-        let data = self.data.lock().unwrap();
-        if data.draw_ticks {
-            // TODO: print labels
-            for (t, _label) in Plot1DData::<0>::TICKS
-                .iter()
-                .zip(Plot1DData::<0>::TICK_LABELS.iter())
-            {
-                let x = bx.lerp(bx + bw, *t);
-                let y = (by + bh).lerp(by, *t);
-                path.move_to(x, y_base);
-                path.line_to(x, y_top);
-                path.move_to(x_base, y);
-                path.line_to(x_top, y);
-            }
+        // TODO: print labels
+        for (t, _label) in Plot1DData::<0>::TICKS
+            .iter()
+            .zip(Plot1DData::<0>::TICK_LABELS.iter())
+        {
+            let x = bx.lerp(bx + bw, *t);
+            let y = (by + bh).lerp(by, *t);
+            path.move_to(x, y_base);
+            path.line_to(x, y_top);
+            path.move_to(x_base, y);
+            path.line_to(x_top, y);
         }
         path
     }

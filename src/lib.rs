@@ -4,7 +4,10 @@
 use array_macro::array;
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
-use std::sync::{Arc, Mutex};
+use std::{
+    num::Wrapping,
+    sync::{atomic::Ordering, Arc, Mutex},
+};
 use widgets::Plot1DData;
 
 use crate::math_utils::Lerpable;
@@ -24,6 +27,9 @@ const NUM_CHANNELS: usize = 2;
 
 const PEAK_METER_DECAY_MS: f64 = 650.0;
 
+/// skips computing expensive GUI calculations in audio loop
+const GUI_REFRESH_RATE: f32 = 60.0;
+
 // This is a shortened version of the gain example with most comments removed, check out
 // https://github.com/robbert-vdh/nih-plug/blob/master/plugins/examples/gain/src/lib.rs to get
 // started
@@ -34,13 +40,18 @@ pub struct Clip {
     // === widgets ===
     // TODO: consider RwLock instead
     // TODO: consider a deadlock-free alternative
-    plot: Arc<Mutex<Plot1DData<128>>>,
+    plot: Arc<Plot1DData<128>>,
 
     // === processors ===
     dc_blocker: [dsp::DCBlock; NUM_CHANNELS],
 
-    // === state ===
+    // === config ===
     peak_meter_decay_weight: f32,
+    gui_refresh_period: usize,
+
+    // === volatile state ===
+    // *could* overflow if leaving the plugin running for 24 hours on a 32-bit system
+    frame_counter: Wrapping<usize>,
 }
 
 #[derive(Enum, PartialEq)]
@@ -90,9 +101,11 @@ impl Default for Clip {
     fn default() -> Self {
         Self {
             params: Arc::new(ClipParams::default()),
-            plot: Arc::new(Mutex::new(Plot1DData::new())),
+            plot: Arc::new(Plot1DData::new()),
             dc_blocker: array![dsp::DCBlock::default(); NUM_CHANNELS],
             peak_meter_decay_weight: 1.0,
+            gui_refresh_period: 800,
+            frame_counter: Wrapping(0),
         }
     }
 }
@@ -247,12 +260,16 @@ impl Plugin for Clip {
         // The `reset()` function is always called right after this function. You can remove this
         // function if you do not need it.
 
-        self.plot.lock().unwrap().xlim = (0.0, 1.0);
-        self.plot.lock().unwrap().ylim = (0.0, 1.0);
+        self.plot.xlim.0.store(0.0, Ordering::Relaxed);
+        self.plot.xlim.1.store(1.0, Ordering::Relaxed);
+        self.plot.ylim.0.store(0.0, Ordering::Relaxed);
+        self.plot.ylim.1.store(1.0, Ordering::Relaxed);
 
         self.peak_meter_decay_weight = 0.25f64
             .powf((f64::from(buffer_config.sample_rate) * PEAK_METER_DECAY_MS / 1000.0).recip())
             as f32;
+
+        self.gui_refresh_period = (buffer_config.sample_rate / GUI_REFRESH_RATE).trunc() as usize;
 
         true
     }
@@ -340,20 +357,28 @@ impl Plugin for Clip {
 
                 // TODO: this is really really bad for performance, almost on purpose
                 //       because I want to track the performance gains when optimizing
-                let mut plot = self.plot.lock().unwrap();
-                plot.in_amp = if in_amp > plot.in_amp {
+                let mut plot_in_amp = self.plot.in_amp.load(Ordering::Relaxed);
+                let mut plot_out_amp = self.plot.out_amp.load(Ordering::Relaxed);
+                plot_in_amp = if in_amp > plot_in_amp {
                     in_amp
                 } else {
-                    plot.in_amp * self.peak_meter_decay_weight
+                    plot_in_amp * self.peak_meter_decay_weight
                         + in_amp * (1.0 - self.peak_meter_decay_weight)
                 };
-                plot.out_amp = if out_amp > plot.out_amp {
+                plot_out_amp = if out_amp > plot_out_amp {
                     out_amp
                 } else {
-                    plot.out_amp * self.peak_meter_decay_weight
+                    plot_out_amp * self.peak_meter_decay_weight
                         + out_amp * (1.0 - self.peak_meter_decay_weight)
                 };
-                plot.plot_function(main_nonlinearity);
+                self.plot.in_amp.store(plot_in_amp, Ordering::Relaxed);
+                self.plot.out_amp.store(plot_out_amp, Ordering::Relaxed);
+
+                if self.frame_counter.0 % self.gui_refresh_period == 0 {
+                    self.plot.plot_function(main_nonlinearity);
+                }
+                self.frame_counter += 1;
+                dbg!(self.frame_counter);
             }
         }
 
