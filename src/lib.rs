@@ -1,8 +1,9 @@
 #![allow(clippy::items_after_statements)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
+#![feature(generic_const_exprs)]
 use array_macro::array;
-use dsp::Processor;
+use dsp::MonoProcessor;
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
 use std::{

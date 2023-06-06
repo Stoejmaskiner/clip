@@ -2,6 +2,8 @@
 
 ## Building
 
+> Note: right now some nightly features are required, so you need to switch to the nightly toolchain to build: `rustup default nightly`
+
 After installing [Rust](https://rustup.rs/), you can compile Clip as follows:
 
 ```shell

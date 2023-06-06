@@ -1,5 +1,41 @@
 use num_traits::FromPrimitive;
 
+// generated using scripts/filters.py
+const MIN_PHASE_FIR_HALFBAND: usize = 30;
+const MIN_PHASE_FIR_HALFBAND_FRAC_2: usize = MIN_PHASE_FIR_HALFBAND / 2;
+const MIN_PHASE_HALFBAND: [f32; MIN_PHASE_FIR_HALFBAND] = [
+    0.05349789653525128,
+    0.20166530907017383,
+    0.3665564610202743,
+    0.38276975370675703,
+    0.18390590463720796,
+    -0.0751514681309898,
+    -0.16576188035056055,
+    -0.049620308414873714,
+    0.08674984956321416,
+    0.0788759087731493,
+    -0.024001015790926138,
+    -0.06699486240789757,
+    -0.01164952637895525,
+    0.042559957248806284,
+    0.02487196863463194,
+    -0.01999681539939316,
+    -0.024144101815857494,
+    0.0049342447197044375,
+    0.01739727476557889,
+    0.0023797023779942614,
+    -0.010077325489379755,
+    -0.004276124695963664,
+    0.004771534702310419,
+    0.0035256758204267155,
+    -0.0018835102233401696,
+    -0.002146347959864804,
+    0.0007281761768500793,
+    0.0010984367009729214,
+    -0.00043280417766092364,
+    0.0,
+];
+
 /// variable hardness clipping. For hardness `h`, the range `[0, 0.935]` is normal.
 ///
 /// Due to issues with stability when `h` approaches 1, crossfades internally to a
@@ -13,7 +49,7 @@ pub fn var_hard_clip(x: f32, hardness: f32) -> f32 {
     analog * (1.0 - fade) + digital * fade
 }
 
-pub trait Processor {
+pub trait MonoProcessor {
     fn step(&mut self, x: f32) -> f32;
 
     /// implement to provide a vectorized version, otherwise it defaults to
@@ -50,7 +86,7 @@ pub struct DCBlock {
     y_z1: f32,
 }
 
-impl Processor for DCBlock {
+impl MonoProcessor for DCBlock {
     fn step(&mut self, x: f32) -> f32 {
         let y = x - self.x_z1 + 0.9975 * self.y_z1;
         self.x_z1 = x;
@@ -68,7 +104,7 @@ where
     closure: F,
 }
 
-impl<F> Processor for ClosureProcessor<F>
+impl<F> MonoProcessor for ClosureProcessor<F>
 where
     F: Fn(f32) -> f32,
 {
@@ -77,13 +113,86 @@ where
     }
 }
 
-/// fast X4 oversampling wrapper
-pub struct OversampleX4<P: Processor> {
-    inner_processor: P,
+struct RingBuffer<const N: usize> {
+    buffer: [f32; N],
+    write_head: usize,
 }
 
-impl<P: Processor> Processor for OversampleX4<P> {
+impl<const N: usize> RingBuffer<N> {
+    fn new() -> Self {
+        Self {
+            buffer: [0.0; N + 1],
+            write_head: 0,
+        }
+    }
+
+    fn push(&mut self, x: f32) -> &mut Self {
+        self.write_head += 1;
+        self.write_head %= N;
+        self.buffer[self.write_head] = x;
+        self
+    }
+
+    fn tap(&self, delay: usize) -> f32 {
+        assert!(delay < N);
+        let idx = (self.write_head - delay) % N;
+        self.buffer[idx]
+    }
+}
+
+struct FixedDelay<const N: usize> {
+    buffer: RingBuffer<N>,
+}
+
+impl<const N: usize> FixedDelay<N> {
+    fn new() -> Self {
+        Self {
+            buffer: RingBuffer<N>::new()
+        }
+    }
+}
+
+impl<const N: usize> MonoProcessor for FixedDelay<N> {
     fn step(&mut self, x: f32) -> f32 {
-        x
+        self.buffer.push(x).tap(N)
+    }
+
+    fn exact_latency(&self) -> f32 {
+        f32::from(N)
+    }
+
+    fn rounded_latency(&self) -> usize {
+        N
+    }
+}
+
+/// fast X2 oversampling wrapper
+pub struct Oversample<P: MonoProcessor> {
+    inner_processor: P,
+    even_delay_line: FixedDelay,
+    odd_delay_line: FixedDelay,
+}
+
+impl<P: MonoProcessor> Oversample<P> {
+    fn new(inner_processor: P) -> Self {
+        Self {
+            inner_processor: inner_processor,
+            even_delay_line: FixedDelay<MIN_PHASE_FIR_HALFBAND_FRAC_2>::new(),
+            odd_delay_line: FixedDelay<MIN_PHASE_FIR_HALFBAND_FRAC_2>::new()
+        }
+    }
+
+    fn step_even(&mut self) -> f32 {
+        todo!();
+    }
+
+    fn step_odd(&mut self) -> f32 {
+        todo!();
+    }
+}
+
+impl<P: MonoProcessor> MonoProcessor for Oversample<P> {
+    fn step(&mut self, x: f32) -> f32 {
+        self.inner_processor.step(x)
     }
 }
