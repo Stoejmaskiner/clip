@@ -1,52 +1,46 @@
 use num_traits::FromPrimitive;
 
-// generated using scripts/filters.py
-const MIN_PHASE_FIR_HALFBAND: usize = 30;
-const MIN_PHASE_FIR_HALFBAND_FRAC_2: usize = MIN_PHASE_FIR_HALFBAND / 2;
-const MIN_PHASE_HALFBAND: [f32; MIN_PHASE_FIR_HALFBAND] = [
-    0.05349789653525128,
-    0.20166530907017383,
-    0.3665564610202743,
-    0.38276975370675703,
-    0.18390590463720796,
-    -0.0751514681309898,
-    -0.16576188035056055,
-    -0.049620308414873714,
-    0.08674984956321416,
-    0.0788759087731493,
-    -0.024001015790926138,
-    -0.06699486240789757,
-    -0.01164952637895525,
-    0.042559957248806284,
-    0.02487196863463194,
-    -0.01999681539939316,
-    -0.024144101815857494,
-    0.0049342447197044375,
-    0.01739727476557889,
-    0.0023797023779942614,
-    -0.010077325489379755,
-    -0.004276124695963664,
-    0.004771534702310419,
-    0.0035256758204267155,
-    -0.0018835102233401696,
-    -0.002146347959864804,
-    0.0007281761768500793,
-    0.0010984367009729214,
-    -0.00043280417766092364,
-    0.0,
-];
+// mod filter_coefficients;
+mod ring_buffer;
+use crate::filter_coefficients::LP_FIR_2X_TO_1X_MINIMUM;
+use crate::filter_coefficients::LP_FIR_2X_TO_1X_MINIMUM_LEN;
+use crate::filter_coefficients::LP_FIR_4X_TO_2X_MINIMUM;
+use crate::filter_coefficients::LP_FIR_4X_TO_2X_MINIMUM_LEN;
+
+use self::ring_buffer::RingBuffer;
+
+// TODO: this is necessary because rust does not have const generic expressions
+const LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN / 2;
+const LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2: usize = LP_FIR_4X_TO_2X_MINIMUM_LEN / 2;
+const LP_FIR_2X_TO_1X_MINIMUM_LEN_PLUS_1: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN + 1;
+const LP_FIR_4X_TO_2X_MINIMUM_LEN_PLUS_1: usize = LP_FIR_4X_TO_2X_MINIMUM_LEN + 1;
+const LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2_PLUS_1: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2 + 1;
+const LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2_PLUS_1: usize = LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2 + 1;
 
 /// variable hardness clipping. For hardness `h`, the range `[0, 0.935]` is normal.
 ///
 /// Due to issues with stability when `h` approaches 1, crossfades internally to a
 /// digital hard clip after 0.935.
-pub fn var_hard_clip(x: f32, hardness: f32) -> f32 {
+// TODO: very hot function, optimize!
+pub(crate) fn var_hard_clip(x: f32, hardness: f32) -> f32 {
     let clamped_hardness = hardness.min(0.935);
     let fade = (hardness - clamped_hardness) / (1.0 - 0.935);
     let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
     let analog = x / (1.0 + x.abs().powf(softness.recip())).powf(softness);
     let digital = x.clamp(-1.0, 1.0);
     analog * (1.0 - fade) + digital * fade
+}
+
+/// processor version of `var_hard_clip`
+#[derive(Default, Clone, Debug)]
+pub struct VarHardClip {
+    pub hardness: f32,
+}
+
+impl MonoProcessor for VarHardClip {
+    fn step(&mut self, x: f32) -> f32 {
+        var_hard_clip(x, self.hardness)
+    }
 }
 
 pub trait MonoProcessor {
@@ -95,104 +89,154 @@ impl MonoProcessor for DCBlock {
     }
 }
 
-/// a simple processor that allows wrapping a function into a processor, for
-/// use in processor chains and containers
-pub struct ClosureProcessor<F>
-where
-    F: Fn(f32) -> f32,
-{
-    closure: F,
+// /// a simple processor that allows wrapping a function into a processor, for
+// /// use in processor chains and containers
+// pub struct ClosureProcessor<F>
+// where
+//     F: Fn(f32) -> f32,
+// {
+//     closure: F,
+// }
+
+// impl<F> MonoProcessor for ClosureProcessor<F>
+// where
+//     F: Fn(f32) -> f32,
+// {
+//     fn step(&mut self, x: f32) -> f32 {
+//         (self.closure)(x)
+//     }
+// }
+
+/// fast X4 oversampling wrapper
+#[derive(Debug, Clone)]
+pub struct OversampleX4<P: MonoProcessor> {
+    pub inner_processor: P,
+    up_delay_line_x2: RingBuffer<LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2_PLUS_1>,
+    up_delay_line_x4: RingBuffer<LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2_PLUS_1>,
+    down_delay_line_x2: RingBuffer<LP_FIR_2X_TO_1X_MINIMUM_LEN_PLUS_1>,
+    down_delay_line_x4: RingBuffer<LP_FIR_4X_TO_2X_MINIMUM_LEN_PLUS_1>,
 }
 
-impl<F> MonoProcessor for ClosureProcessor<F>
-where
-    F: Fn(f32) -> f32,
-{
-    fn step(&mut self, x: f32) -> f32 {
-        (self.closure)(x)
-    }
-}
-
-struct RingBuffer<const N: usize> {
-    buffer: [f32; N],
-    write_head: usize,
-}
-
-impl<const N: usize> RingBuffer<N> {
-    fn new() -> Self {
-        Self {
-            buffer: [0.0; N + 1],
-            write_head: 0,
-        }
-    }
-
-    fn push(&mut self, x: f32) -> &mut Self {
-        self.write_head += 1;
-        self.write_head %= N;
-        self.buffer[self.write_head] = x;
-        self
-    }
-
-    fn tap(&self, delay: usize) -> f32 {
-        assert!(delay < N);
-        let idx = (self.write_head - delay) % N;
-        self.buffer[idx]
-    }
-}
-
-struct FixedDelay<const N: usize> {
-    buffer: RingBuffer<N>,
-}
-
-impl<const N: usize> FixedDelay<N> {
-    fn new() -> Self {
-        Self {
-            buffer: RingBuffer<N>::new()
-        }
-    }
-}
-
-impl<const N: usize> MonoProcessor for FixedDelay<N> {
-    fn step(&mut self, x: f32) -> f32 {
-        self.buffer.push(x).tap(N)
-    }
-
-    fn exact_latency(&self) -> f32 {
-        f32::from(N)
-    }
-
-    fn rounded_latency(&self) -> usize {
-        N
-    }
-}
-
-/// fast X2 oversampling wrapper
-pub struct Oversample<P: MonoProcessor> {
-    inner_processor: P,
-    even_delay_line: FixedDelay,
-    odd_delay_line: FixedDelay,
-}
-
-impl<P: MonoProcessor> Oversample<P> {
-    fn new(inner_processor: P) -> Self {
+impl<P: MonoProcessor> OversampleX4<P> {
+    pub fn new(inner_processor: P) -> Self {
         Self {
             inner_processor: inner_processor,
-            even_delay_line: FixedDelay<MIN_PHASE_FIR_HALFBAND_FRAC_2>::new(),
-            odd_delay_line: FixedDelay<MIN_PHASE_FIR_HALFBAND_FRAC_2>::new()
+            up_delay_line_x2: RingBuffer::new(),
+            up_delay_line_x4: RingBuffer::new(),
+            down_delay_line_x2: RingBuffer::new(),
+            down_delay_line_x4: RingBuffer::new(),
         }
     }
 
-    fn step_even(&mut self) -> f32 {
-        todo!();
+    fn step_up_2x(&mut self, x: f32) -> (f32, f32) {
+        self.up_delay_line_x2.push(x);
+
+        // 2x even step
+        // let e: f32 = self
+        //     .up_delay_line_x2
+        //     .into_iter()
+        //     .zip(LP_FIR_2X_TO_1X_MINIMUM.into_iter().step_by(2))
+        //     .map(|(x, y)| x * y)
+        //     .sum::<f32>()
+        //     * 2.0;
+
+        // // 2x odd step
+        // let o: f32 = self
+        //     .up_delay_line_x2
+        //     .into_iter()
+        //     .zip(LP_FIR_2X_TO_1X_MINIMUM.into_iter().skip(1).step_by(2))
+        //     .map(|(x, y)| x * y)
+        //     .sum::<f32>()
+        //     * 2.0;
+
+        // 2x even step
+        let even = {
+            let mut a = 0.0f32;
+            for i in 0..(self.up_delay_line_x2.len() - 1) {
+                let coeff = LP_FIR_2X_TO_1X_MINIMUM[i * 2];
+                a += self.up_delay_line_x2.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        // 2x odd step
+        let odd = {
+            let mut a = 0.0f32;
+            for i in 0..(self.up_delay_line_x2.len() - 1) {
+                let coeff = LP_FIR_2X_TO_1X_MINIMUM[1 + i * 2];
+                a += self.up_delay_line_x2.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        (even, odd)
     }
 
-    fn step_odd(&mut self) -> f32 {
-        todo!();
+    fn step_up_4x(&mut self, x: f32) -> (f32, f32) {
+        self.up_delay_line_x4.push(x);
+
+        // 4x even step
+        let even = {
+            let mut a = 0.0f32;
+            for i in 0..(self.up_delay_line_x4.len() - 1) {
+                let coeff = LP_FIR_4X_TO_2X_MINIMUM[i * 2];
+                a += self.up_delay_line_x4.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        // 4x odd step
+        let odd = {
+            let mut a = 0.0f32;
+            for i in 0..(self.up_delay_line_x4.len() - 1) {
+                let coeff = LP_FIR_4X_TO_2X_MINIMUM[1 + i * 2];
+                a += self.up_delay_line_x4.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        (even, odd)
+    }
+
+    fn step_down_4x(&mut self, x0: f32, x1: f32) -> f32 {
+        self.down_delay_line_x4.push(x0);
+        self.down_delay_line_x4.push(x1);
+
+        let mut a = 0.0f32;
+        for i in 0..(self.down_delay_line_x4.len() - 1) {
+            let coeff = LP_FIR_4X_TO_2X_MINIMUM[i];
+            a += self.down_delay_line_x4.tap(i) * coeff;
+        }
+        a
+    }
+
+    fn step_down_2x(&mut self, x0: f32, x1: f32) -> f32 {
+        self.down_delay_line_x2.push(x0);
+        self.down_delay_line_x2.push(x1);
+
+        let mut a = 0.0f32;
+        for i in 0..(self.down_delay_line_x2.len() - 1) {
+            let coeff = LP_FIR_2X_TO_1X_MINIMUM[i];
+            a += self.down_delay_line_x2.tap(i) * coeff;
+        }
+        a
     }
 }
 
-impl<P: MonoProcessor> MonoProcessor for Oversample<P> {
+impl<P: MonoProcessor> MonoProcessor for OversampleX4<P> {
     fn step(&mut self, x: f32) -> f32 {
-        self.inner_processor.step(x)
+        // get 4 consecutive upsampled samples from 1 input sample
+        let (x0, x1) = self.step_up_2x(x);
+        let (x00, x01) = self.step_up_4x(x0);
+        let (x10, x11) = self.step_up_4x(x1);
+
+        let y00 = self.inner_processor.step(x00);
+        let y01 = self.inner_processor.step(x01);
+        let y10 = self.inner_processor.step(x10);
+        let y11 = self.inner_processor.step(x11);
+
+        let y0 = self.step_down_4x(y00, y01);
+        let y1 = self.step_down_4x(y10, y11);
+        self.step_down_2x(y0, y1)
     }
 }

@@ -1,7 +1,8 @@
 #![allow(clippy::items_after_statements)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
-#![feature(generic_const_exprs)]
+// #![allow(incomplete_features)]
+// #![feature(generic_const_exprs)]
 use array_macro::array;
 use dsp::MonoProcessor;
 use nih_plug::prelude::*;
@@ -12,10 +13,11 @@ use std::{
 };
 use widgets::Plot1DData;
 
-use crate::math_utils::Lerpable;
+use crate::{dsp::var_hard_clip, math_utils::Lerpable};
 
 mod dsp;
 mod editor;
+mod filter_coefficients;
 mod math_utils;
 mod params;
 mod widgets;
@@ -43,6 +45,7 @@ pub struct Clip {
 
     // === processors ===
     dc_blocker: [dsp::DCBlock; NUM_CHANNELS],
+    clipper: [dsp::OversampleX4<dsp::VarHardClip>; NUM_CHANNELS],
 
     // === config ===
     peak_meter_decay_weight: f32,
@@ -62,6 +65,7 @@ impl Default for Clip {
             peak_meter_decay_weight: 1.0,
             gui_refresh_period: 800,
             frame_counter: Wrapping(0),
+            clipper: array![dsp::OversampleX4::new(dsp::VarHardClip::default()); NUM_CHANNELS],
         }
     }
 }
@@ -161,6 +165,9 @@ impl Plugin for Clip {
                 let threshold = self.params.threshold.smoothed.next();
                 let mix = self.params.mix.smoothed.next();
                 let dc_block = self.params.dc_block.value();
+                for p in &mut self.clipper {
+                    p.inner_processor.hardness = hardness;
+                }
 
                 // There are two main approaches to gain compensation, the first is to
                 // divide the post-clipping by the drive amount. This approaches -inf dB
@@ -180,19 +187,21 @@ impl Plugin for Clip {
                     dsp::var_hard_clip(drive, hardness) * CALIBRATION + drive * INV_CALIBRATION;
 
                 // TODO: put this somewhere else
-                let main_nonlinearity = |x| {
-                    let dry = x;
+                let pre_gain = |x: f32| {
                     let mut y = x;
                     y *= pre_gain;
                     y *= drive;
                     y /= threshold;
-                    y = dsp::var_hard_clip(y, hardness);
+                    y
+                };
+                let post_gain = |x: f32| {
+                    let mut y = x;
                     y *= threshold;
                     y /= drive_compensation;
                     y *= post_gain;
-                    y = dry.lerp(y, mix);
                     y
                 };
+                let dry_wet_mix = |dry: f32, wet: f32| dry.lerp(wet, mix);
 
                 let mut in_amp_sum = 0.0;
                 let mut out_amp_sum = 0.0;
@@ -203,8 +212,12 @@ impl Plugin for Clip {
                         *sample = self.dc_blocker[chan].step(*sample);
                     }
 
+                    let dry = *sample;
                     in_amp_sum += *sample;
-                    *sample = main_nonlinearity(*sample);
+                    *sample = pre_gain(*sample);
+                    *sample = self.clipper[chan].step(*sample);
+                    *sample = post_gain(*sample);
+                    *sample = dry_wet_mix(dry, *sample);
                     out_amp_sum += *sample;
                 }
 
@@ -235,7 +248,14 @@ impl Plugin for Clip {
                 self.plot.out_amp.store(plot_out_amp, Ordering::Relaxed);
 
                 if self.frame_counter.0 % self.gui_refresh_period == 0 {
-                    self.plot.plot_function(main_nonlinearity);
+                    self.plot.plot_function(|x| {
+                        let mut y = x;
+                        y = pre_gain(y);
+                        y = var_hard_clip(y, hardness);
+                        y = post_gain(y);
+                        y = dry_wet_mix(x, y);
+                        y
+                    });
                 }
                 self.frame_counter += 1;
                 dbg!(self.frame_counter);

@@ -24,7 +24,16 @@ def main():
     parser = ArgumentParser()
     parser.add_argument(
         "actions",
-        choices=["build", "deploy", "run", "debug", "dev-install", "lint", "fix"],
+        choices=[
+            "generate-filters",
+            "build",
+            "deploy",
+            "run",
+            "debug",
+            "dev-install",
+            "lint",
+            "fix",
+        ],
         nargs="+",
     )
 
@@ -34,6 +43,8 @@ def main():
         match a:
             case "dev-install":
                 dev_install()
+            case "generate-filters":
+                generate_filters()
             case "build":
                 build()
             case "deploy":
@@ -109,6 +120,12 @@ def lint():
 @functools.cache
 def fix():
     subprocess.run(["cargo", "clippy", "--fix", "--", "-W", "clippy::pedantic"])
+
+
+@functools.cache
+def generate_filters():
+    with open("src/dsp/filter_coefficients.rs", "w") as f:
+        subprocess.run(["python3", "scripts/generate_filters.py"], stdout=f)
 
 
 if __name__ == "__main__":

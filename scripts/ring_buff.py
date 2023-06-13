@@ -18,6 +18,9 @@ class RingBuffer:
         idx = (self.write_head - delay) % len(self.buffer)
         return self.buffer[idx]
 
+    def __getitem__(self, idx) -> float:
+        return self.tap(idx)
+
 
 class FixedDelay:
     def __init__(self, delay: int):
