@@ -24,8 +24,17 @@ const EFFECTIVE_TAIL: usize = 128;
 /// digital hard clip after 0.935.
 // TODO: very hot function, optimize!
 pub(crate) fn var_hard_clip(x: f32, hardness: f32) -> f32 {
-    let clamped_hardness = hardness.min(0.935);
-    let fade = (hardness - clamped_hardness) / (1.0 - 0.935);
+    // hardness above this limit causes numerical instability
+    const MAX_HARDNESS: f32 = 0.935;
+
+    // input amplitude over this range (linear scale) causes numerical instability
+    const STABILITY_RANGE: f32 = 16.0;
+
+    // safety first, avoids NaN later
+    let x = x.clamp(-STABILITY_RANGE, STABILITY_RANGE);
+
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
     let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
     let analog = x / (1.0 + x.abs().powf(softness.recip())).powf(softness);
     let digital = x.clamp(-1.0, 1.0);
