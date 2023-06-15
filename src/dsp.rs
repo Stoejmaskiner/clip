@@ -16,6 +16,7 @@ const LP_FIR_2X_TO_1X_MINIMUM_LEN_PLUS_1: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN + 
 const LP_FIR_4X_TO_2X_MINIMUM_LEN_PLUS_1: usize = LP_FIR_4X_TO_2X_MINIMUM_LEN + 1;
 const LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2_PLUS_1: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2 + 1;
 const LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2_PLUS_1: usize = LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2 + 1;
+const EFFECTIVE_TAIL: usize = 128;
 
 /// variable hardness clipping. For hardness `h`, the range `[0, 0.935]` is normal.
 ///
@@ -41,10 +42,21 @@ impl MonoProcessor for VarHardClip {
     fn step(&mut self, x: f32) -> f32 {
         var_hard_clip(x, self.hardness)
     }
+
+    fn reset(&mut self) {}
+
+    fn initialize(&mut self) {}
 }
 
 pub trait MonoProcessor {
+    /// process a single sample of audio
     fn step(&mut self, x: f32) -> f32;
+
+    /// reset any buffers or envelopes
+    fn reset(&mut self);
+
+    /// initialize expensive calculations that are only run on program changes
+    fn initialize(&mut self);
 
     /// implement to provide a vectorized version, otherwise it defaults to
     /// calling step repeatedly
@@ -54,7 +66,7 @@ pub trait MonoProcessor {
         }
     }
 
-    /// latency in fractions of samples. If you implement this, then `latency`
+    /// latency in fractions of samples. If you implement this, then `rounded_latency`
     /// is defined by default in terms of this.
     ///
     /// This latency can usually be calculated in terms of the exact latency of inner
@@ -64,7 +76,20 @@ pub trait MonoProcessor {
     }
 
     fn rounded_latency(&self) -> usize {
-        usize::from_f32(self.exact_latency().max(0.0).ceil()).unwrap()
+        usize::from_f32(self.exact_latency().max(0.0).round()).unwrap()
+    }
+
+    /// tail length in fractions of samples. If you implement this, then `rounded_tail`
+    /// is defined by default in terms of this.
+    ///
+    /// This tail length can usually be calculated in terms of the exact latency of
+    /// inner processors.
+    fn exact_tail(&self) -> f32 {
+        0.0
+    }
+
+    fn rounded_tail(&self) -> usize {
+        usize::from_f32(self.exact_tail().max(0.0).ceil()).unwrap()
     }
 
     // TODO:
@@ -87,6 +112,13 @@ impl MonoProcessor for DCBlock {
         self.y_z1 = y;
         y
     }
+
+    fn reset(&mut self) {
+        self.y_z1 = 0.0;
+        self.x_z1 = 0.0;
+    }
+
+    fn initialize(&mut self) {}
 }
 
 // /// a simple processor that allows wrapping a function into a processor, for
@@ -130,24 +162,6 @@ impl<P: MonoProcessor> OversampleX4<P> {
 
     fn step_up_2x(&mut self, x: f32) -> (f32, f32) {
         self.up_delay_line_x2.push(x);
-
-        // 2x even step
-        // let e: f32 = self
-        //     .up_delay_line_x2
-        //     .into_iter()
-        //     .zip(LP_FIR_2X_TO_1X_MINIMUM.into_iter().step_by(2))
-        //     .map(|(x, y)| x * y)
-        //     .sum::<f32>()
-        //     * 2.0;
-
-        // // 2x odd step
-        // let o: f32 = self
-        //     .up_delay_line_x2
-        //     .into_iter()
-        //     .zip(LP_FIR_2X_TO_1X_MINIMUM.into_iter().skip(1).step_by(2))
-        //     .map(|(x, y)| x * y)
-        //     .sum::<f32>()
-        //     * 2.0;
 
         // 2x even step
         let even = {
@@ -226,17 +240,27 @@ impl<P: MonoProcessor> OversampleX4<P> {
 impl<P: MonoProcessor> MonoProcessor for OversampleX4<P> {
     fn step(&mut self, x: f32) -> f32 {
         // get 4 consecutive upsampled samples from 1 input sample
-        let (x0, x1) = self.step_up_2x(x);
-        let (x00, x01) = self.step_up_4x(x0);
-        let (x10, x11) = self.step_up_4x(x1);
+        // let (x0, x1) = self.step_up_2x(x);
+        // let (x00, x01) = self.step_up_4x(x0);
+        // let (x10, x11) = self.step_up_4x(x1);
 
-        let y00 = self.inner_processor.step(x00);
-        let y01 = self.inner_processor.step(x01);
-        let y10 = self.inner_processor.step(x10);
-        let y11 = self.inner_processor.step(x11);
+        // let y00 = self.inner_processor.step(x00);
+        // let y01 = self.inner_processor.step(x01);
+        // let y10 = self.inner_processor.step(x10);
+        // let y11 = self.inner_processor.step(x11);
 
-        let y0 = self.step_down_4x(y00, y01);
-        let y1 = self.step_down_4x(y10, y11);
-        self.step_down_2x(y0, y1)
+        // let y0 = self.step_down_4x(y00, y01);
+        // let y1 = self.step_down_4x(y10, y11);
+        // self.step_down_2x(y0, y1)
+        self.inner_processor.step(x)
     }
+
+    fn reset(&mut self) {
+        self.up_delay_line_x2.reset();
+        self.up_delay_line_x4.reset();
+        self.down_delay_line_x2.reset();
+        self.down_delay_line_x4.reset();
+    }
+
+    fn initialize(&mut self) {}
 }

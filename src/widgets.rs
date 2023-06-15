@@ -1,5 +1,6 @@
 //! A super simple peak meter widget.
 
+use crate::dsp::MonoProcessor;
 use crate::math_utils::Lerpable;
 
 use array_macro::array;
@@ -54,6 +55,18 @@ impl<const N: usize> Plot1DData<N> {
                 .load(Ordering::Relaxed)
                 .lerp(self.xlim.1.load(Ordering::Relaxed), i as f32 / N as f32);
             ys[i] = f(x);
+        }
+    }
+
+    pub fn plot_processor(&self, processor: &mut impl MonoProcessor) {
+        let mut ys = self.ys.write().unwrap();
+        for i in 0..N {
+            let x = self
+                .xlim
+                .0
+                .load(Ordering::Relaxed)
+                .lerp(self.xlim.1.load(Ordering::Relaxed), i as f32 / N as f32);
+            ys[i] = processor.step(x);
         }
     }
 }

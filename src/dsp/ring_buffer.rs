@@ -33,6 +33,12 @@ impl<const N: usize> RingBuffer<N> {
     pub(super) fn len(&self) -> usize {
         N
     }
+
+    pub(super) fn reset(&mut self) {
+        for s in &mut self.buffer {
+            *s = 0.0;
+        }
+    }
 }
 
 impl<'a, const N: usize> IntoIterator for &'a RingBuffer<N> {

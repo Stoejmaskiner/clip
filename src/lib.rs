@@ -4,12 +4,13 @@
 // #![allow(incomplete_features)]
 // #![feature(generic_const_exprs)]
 use array_macro::array;
+use core::num;
 use dsp::MonoProcessor;
-use nih_plug::prelude::*;
+use nih_plug::{buffer::ChannelSamples, prelude::*};
 use nih_plug_vizia::ViziaState;
 use std::{
     num::Wrapping,
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{atomic::Ordering, mpsc::channel, Arc, Mutex},
 };
 use widgets::Plot1DData;
 
@@ -20,6 +21,7 @@ mod editor;
 mod filter_coefficients;
 mod math_utils;
 mod params;
+mod processors;
 mod widgets;
 
 /// size of each "batch" of samples taken from a channel at a time, independent
@@ -39,13 +41,14 @@ pub struct Clip {
     params: Arc<params::ClipParams>,
 
     // === widgets ===
-    // TODO: consider RwLock instead
-    // TODO: consider a deadlock-free alternative
     plot: Arc<Plot1DData<128>>,
+    in_amp_accumulator: f32,
+    out_amp_accumulator: f32,
 
     // === processors ===
     dc_blocker: [dsp::DCBlock; NUM_CHANNELS],
-    clipper: [dsp::OversampleX4<dsp::VarHardClip>; NUM_CHANNELS],
+    clipper: [dsp::OversampleX4<processors::MainDistortionProcessor>; NUM_CHANNELS],
+    clipper_4_viz: processors::MainDistortionProcessor,
 
     // === config ===
     peak_meter_decay_weight: f32,
@@ -56,16 +59,108 @@ pub struct Clip {
     frame_counter: Wrapping<usize>,
 }
 
+impl Clip {
+    fn param_update(&mut self) {
+        let pre_gain = self.params.pre_gain.smoothed.next();
+        let post_gain = self.params.post_gain.smoothed.next();
+        let hardness = self.params.hardness.smoothed.next();
+        let drive = self.params.drive.smoothed.next();
+        let threshold = self.params.threshold.smoothed.next();
+        let mix = self.params.mix.smoothed.next();
+
+        for c in &mut self.clipper {
+            let inner = &mut (*c).inner_processor;
+            inner.pre_gain = pre_gain;
+            inner.post_gain = post_gain;
+            inner.hardness = hardness;
+            inner.drive = drive;
+            inner.threshold = threshold;
+            inner.mix = mix;
+        }
+
+        self.clipper_4_viz.pre_gain = pre_gain;
+        self.clipper_4_viz.post_gain = post_gain;
+        self.clipper_4_viz.hardness = hardness;
+        self.clipper_4_viz.drive = drive;
+        self.clipper_4_viz.threshold = threshold;
+        self.clipper_4_viz.mix = mix;
+    }
+
+    /// expensive GUI calculations, that are only run at the GUI_REFRESH_RATE
+    /// (i.e. 60 fps) to save on computation. Any GUI-related tasks that need
+    /// to be updated once per sample should be in `audio_update()`
+    fn gui_update(&mut self) {
+        // update meters, the meters slowly decay if the incoming volume is
+        // lower than the past volume, or immediately increases to the new
+        // volume if it is louder than the last.
+        let last_in_amp = self.plot.in_amp.load(Ordering::Relaxed);
+        let last_out_amp = self.plot.out_amp.load(Ordering::Relaxed);
+        let new_in_amp = if self.in_amp_accumulator > last_in_amp {
+            self.in_amp_accumulator
+        } else {
+            last_in_amp * self.peak_meter_decay_weight
+                + self.in_amp_accumulator * (1.0 - self.peak_meter_decay_weight)
+        };
+        let new_out_amp = if self.out_amp_accumulator > last_out_amp {
+            self.out_amp_accumulator
+        } else {
+            last_out_amp * self.peak_meter_decay_weight
+                + self.out_amp_accumulator * (1.0 - self.peak_meter_decay_weight)
+        };
+        self.plot.in_amp.store(new_in_amp, Ordering::Relaxed);
+        self.plot.out_amp.store(new_out_amp, Ordering::Relaxed);
+
+        // reset running meter accumulators
+        self.in_amp_accumulator = 0.0;
+        self.out_amp_accumulator = 0.0;
+
+        self.plot.plot_processor(&mut self.clipper_4_viz);
+    }
+
+    fn audio_update(&mut self, channel_samples: ChannelSamples) {
+        for (chan, sample) in channel_samples.into_iter().enumerate() {
+            // update input amp accumulator (running maximum)
+            {
+                let x = *sample;
+                self.in_amp_accumulator = self.in_amp_accumulator.max((x).abs());
+            }
+
+            // maybe apply DC blocker
+            if self.params.dc_block.value() {
+                let x = *sample;
+                let y = self.dc_blocker[chan].step(x);
+                *sample = y;
+            }
+
+            // apply main distortion
+            {
+                let x = *sample;
+                let y = self.clipper[chan].step(x);
+                *sample = y;
+            }
+
+            // update output amp accumulator (running maximum)
+            {
+                let x = *sample;
+                self.out_amp_accumulator = self.out_amp_accumulator.max((x).abs());
+            }
+        }
+    }
+}
+
 impl Default for Clip {
     fn default() -> Self {
         Self {
             params: Arc::new(params::ClipParams::default()),
             plot: Arc::new(Plot1DData::new()),
+            in_amp_accumulator: 0.0,
+            out_amp_accumulator: 0.0,
             dc_blocker: array![dsp::DCBlock::default(); NUM_CHANNELS],
+            clipper: array![dsp::OversampleX4::new(processors::MainDistortionProcessor::new()); NUM_CHANNELS],
             peak_meter_decay_weight: 1.0,
             gui_refresh_period: 800,
             frame_counter: Wrapping(0),
-            clipper: array![dsp::OversampleX4::new(dsp::VarHardClip::default()); NUM_CHANNELS],
+            clipper_4_viz: processors::MainDistortionProcessor::new(),
         }
     }
 }
@@ -128,7 +223,7 @@ impl Plugin for Clip {
         self.plot.ylim.1.store(1.0, Ordering::Relaxed);
 
         self.peak_meter_decay_weight = 0.25f64
-            .powf((f64::from(buffer_config.sample_rate) * PEAK_METER_DECAY_MS / 1000.0).recip())
+            .powf((f64::from(GUI_REFRESH_RATE) * PEAK_METER_DECAY_MS / 1000.0).recip())
             as f32;
 
         self.gui_refresh_period = (buffer_config.sample_rate / GUI_REFRESH_RATE).trunc() as usize;
@@ -141,6 +236,14 @@ impl Plugin for Clip {
     fn reset(&mut self) {
         // Reset buffers and envelopes here. This can be called from the audio thread and may not
         // allocate. You can remove this function if you do not need it.
+
+        for d in &mut self.dc_blocker {
+            (*d).reset();
+        }
+
+        for c in &mut self.clipper {
+            (*c).reset();
+        }
     }
 
     // ===== PROCESS =====================================================================
@@ -150,119 +253,22 @@ impl Plugin for Clip {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        for (_, mut block) in buffer.iter_blocks(MAX_BLOCK_SIZE) {
-            for channel_samples in block.iter_samples() {
-                // TODO: deciding whether to bypass is done once per block to keep the branching
-                //       outside of the main loop
-                if self.params.bypass.value() {
-                    return ProcessStatus::Normal;
-                }
+        for channel_samples in buffer.iter_samples() {
+            self.param_update();
 
-                let pre_gain = self.params.pre_gain.smoothed.next();
-                let post_gain = self.params.post_gain.smoothed.next();
-                let hardness = self.params.hardness.smoothed.next();
-                let drive = self.params.drive.smoothed.next();
-                let threshold = self.params.threshold.smoothed.next();
-                let mix = self.params.mix.smoothed.next();
-                let dc_block = self.params.dc_block.value();
-                for p in &mut self.clipper {
-                    p.inner_processor.hardness = hardness;
-                }
-
-                // There are two main approaches to gain compensation, the first is to
-                // divide the post-clipping by the drive amount. This approaches -inf dB
-                // with infinite drive. This works well for small drive values, but
-                // overcompensates for high dirve values.
-                //
-                // The other approach is to divide the post-clipping by the clipped drive
-                // amount. This approaches +0dB with infinite drive. It undercompensates for
-                // high drive, but works well for small drives.
-                //
-                // This approach averages the two main approaches, with the weighting
-                // tuned by hand so that volume approaches -6.0dB. This is the same
-                // behavior you see in Fab Filter's "Saturn" plugin.
-                const CALIBRATION: f32 = 0.931_950_8;
-                const INV_CALIBRATION: f32 = 1.0 - CALIBRATION;
-                let drive_compensation =
-                    dsp::var_hard_clip(drive, hardness) * CALIBRATION + drive * INV_CALIBRATION;
-
-                // TODO: put this somewhere else
-                let pre_gain = |x: f32| {
-                    let mut y = x;
-                    y *= pre_gain;
-                    y *= drive;
-                    y /= threshold;
-                    y
-                };
-                let post_gain = |x: f32| {
-                    let mut y = x;
-                    y *= threshold;
-                    y /= drive_compensation;
-                    y *= post_gain;
-                    y
-                };
-                let dry_wet_mix = |dry: f32, wet: f32| dry.lerp(wet, mix);
-
-                let mut in_amp_sum = 0.0;
-                let mut out_amp_sum = 0.0;
-
-                for (chan, sample) in channel_samples.into_iter().enumerate() {
-                    // TODO: branchless?
-                    if dc_block {
-                        *sample = self.dc_blocker[chan].step(*sample);
-                    }
-
-                    let dry = *sample;
-                    in_amp_sum += *sample;
-                    *sample = pre_gain(*sample);
-                    *sample = self.clipper[chan].step(*sample);
-                    *sample = post_gain(*sample);
-                    *sample = dry_wet_mix(dry, *sample);
-                    out_amp_sum += *sample;
-                }
-
-                if !self.params.editor_state.is_open() {
-                    return ProcessStatus::Normal;
-                }
-
-                let in_amp = in_amp_sum.abs() / block.channels() as f32;
-                let out_amp = out_amp_sum.abs() / block.channels() as f32;
-
-                // TODO: this is really really bad for performance, almost on purpose
-                //       because I want to track the performance gains when optimizing
-                let mut plot_in_amp = self.plot.in_amp.load(Ordering::Relaxed);
-                let mut plot_out_amp = self.plot.out_amp.load(Ordering::Relaxed);
-                plot_in_amp = if in_amp > plot_in_amp {
-                    in_amp
-                } else {
-                    plot_in_amp * self.peak_meter_decay_weight
-                        + in_amp * (1.0 - self.peak_meter_decay_weight)
-                };
-                plot_out_amp = if out_amp > plot_out_amp {
-                    out_amp
-                } else {
-                    plot_out_amp * self.peak_meter_decay_weight
-                        + out_amp * (1.0 - self.peak_meter_decay_weight)
-                };
-                self.plot.in_amp.store(plot_in_amp, Ordering::Relaxed);
-                self.plot.out_amp.store(plot_out_amp, Ordering::Relaxed);
-
-                if self.frame_counter.0 % self.gui_refresh_period == 0 {
-                    self.plot.plot_function(|x| {
-                        let mut y = x;
-                        y = pre_gain(y);
-                        y = var_hard_clip(y, hardness);
-                        y = post_gain(y);
-                        y = dry_wet_mix(x, y);
-                        y
-                    });
-                }
-                self.frame_counter += 1;
-                dbg!(self.frame_counter);
+            if !self.params.bypass.value() {
+                self.audio_update(channel_samples);
+                //return ProcessStatus::Tail(256);
             }
-        }
 
-        ProcessStatus::Normal
+            if self.frame_counter.0 % self.gui_refresh_period == 0
+                && self.params.editor_state.is_open()
+            {
+                self.gui_update();
+            }
+            self.frame_counter += 1;
+        }
+        ProcessStatus::Tail(256)
     }
 }
 
