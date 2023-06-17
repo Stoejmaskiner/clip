@@ -16,6 +16,9 @@ const LP_FIR_2X_TO_1X_MINIMUM_LEN_PLUS_1: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN + 
 const LP_FIR_4X_TO_2X_MINIMUM_LEN_PLUS_1: usize = LP_FIR_4X_TO_2X_MINIMUM_LEN + 1;
 const LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2_PLUS_1: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2 + 1;
 const LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2_PLUS_1: usize = LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2 + 1;
+
+// TODO: determine tail length algorithmically
+// TODO: determine latency algorithmically
 const EFFECTIVE_TAIL: usize = 128;
 
 /// variable hardness clipping. For hardness `h`, the range `[0, 0.935]` is normal.

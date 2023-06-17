@@ -94,7 +94,8 @@ def run():
 
 @functools.cache
 def debug():
-    subprocess.run(["cargo", "run", "--features", "draw_gizmos"])
+    # subprocess.run(["cargo", "run", "--features", "draw_gizmos"])
+    subprocess.run(["cargo", "run"])
 
 
 @functools.cache
