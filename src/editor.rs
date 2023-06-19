@@ -149,7 +149,9 @@ pub(crate) fn create<const N: usize>(
                     .height(Stretch(1.0))
                     .outline_color(Color::black())
                     .border_width(Pixels(1.0))
-                    .border_color(Color::black());
+                    .border_color(Color::black())
+                    .overflow(Overflow::Hidden);
+
                 // Element::new(cx)
                 //     .width(Pixels(100.0))
                 //     .height(Stretch(1.0))
