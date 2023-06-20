@@ -8,6 +8,9 @@ use std::{
     sync::{atomic::Ordering, Arc, Mutex},
 };
 
+pub const DRIVE_MIN_DB: f32 = -6.0;
+pub const DRIVE_MAX_DB: f32 = 36.0;
+
 #[derive(Enum, PartialEq)]
 enum ClipMode {
     Digital,
@@ -106,9 +109,9 @@ impl Default for ClipParams {
                 "Drive",
                 util::db_to_gain(0.0),
                 FloatRange::Skewed {
-                    min: util::db_to_gain(-12.0),
-                    max: util::db_to_gain(24.0),
-                    factor: FloatRange::gain_skew_factor(-12.0, 24.0),
+                    min: util::db_to_gain(-6.0),
+                    max: util::db_to_gain(36.0),
+                    factor: FloatRange::gain_skew_factor(-6.0, 36.0),
                 },
             )
             .with_smoother(SmoothingStyle::Logarithmic(50.0))

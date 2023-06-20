@@ -252,19 +252,19 @@ impl<P: MonoProcessor> OversampleX4<P> {
 impl<P: MonoProcessor> MonoProcessor for OversampleX4<P> {
     fn step(&mut self, x: f32) -> f32 {
         // get 4 consecutive upsampled samples from 1 input sample
-        // let (x0, x1) = self.step_up_2x(x);
-        // let (x00, x01) = self.step_up_4x(x0);
-        // let (x10, x11) = self.step_up_4x(x1);
+        let (x0, x1) = self.step_up_2x(x);
+        let (x00, x01) = self.step_up_4x(x0);
+        let (x10, x11) = self.step_up_4x(x1);
 
-        // let y00 = self.inner_processor.step(x00);
-        // let y01 = self.inner_processor.step(x01);
-        // let y10 = self.inner_processor.step(x10);
-        // let y11 = self.inner_processor.step(x11);
+        let y00 = self.inner_processor.step(x00);
+        let y01 = self.inner_processor.step(x01);
+        let y10 = self.inner_processor.step(x10);
+        let y11 = self.inner_processor.step(x11);
 
-        // let y0 = self.step_down_4x(y00, y01);
-        // let y1 = self.step_down_4x(y10, y11);
-        // self.step_down_2x(y0, y1)
-        self.inner_processor.step(x)
+        let y0 = self.step_down_4x(y00, y01);
+        let y1 = self.step_down_4x(y10, y11);
+        self.step_down_2x(y0, y1)
+        //self.inner_processor.step(x)
     }
 
     fn reset(&mut self) {
