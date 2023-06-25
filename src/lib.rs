@@ -8,6 +8,7 @@ use core::num;
 use dsp::MonoProcessor;
 use nih_plug::{buffer::ChannelSamples, prelude::*};
 use nih_plug_vizia::ViziaState;
+use rand::prelude::*;
 use std::{
     num::Wrapping,
     sync::{atomic::Ordering, mpsc::channel, Arc, Mutex},
@@ -128,7 +129,8 @@ impl Clip {
 
             // maybe apply DC blocker
             if self.params.dc_block.value() {
-                let x = *sample;
+                // let x = *sample;
+                let x = random::<f32>();
                 let y = self.dc_blocker[chan].step(x);
                 *sample = y;
             }

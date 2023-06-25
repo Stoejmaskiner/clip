@@ -99,7 +99,8 @@ impl Default for ClipParams {
             .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
 
-            hardness: FloatParam::new("Hardness", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+            // TODO: change pl0x
+            hardness: FloatParam::new("Hardness", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_smoother(SmoothingStyle::Linear(50.0))
                 .with_unit(" %")
                 .with_value_to_string(formatters::v2s_f32_percentage(2))

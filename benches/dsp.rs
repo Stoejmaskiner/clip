@@ -3,8 +3,8 @@ use clip::dsp::{
     inline_var_hard_clip_faster_simd_4, inline_var_hard_clip_fastest,
     inline_var_hard_clip_fastest_simd_4, var_hard_clip, var_hard_clip_fast,
     var_hard_clip_fast_simd_4, var_hard_clip_faster, var_hard_clip_faster_simd_4,
-    var_hard_clip_fastest, var_hard_clip_fastest_simd_4, var_hard_clip_simd_4, IdentityProcessor,
-    MonoProcessor, OversampleX4,
+    var_hard_clip_fastest, var_hard_clip_fastest_simd_4, var_hard_clip_simd_4, FastOversampleX4,
+    IdentityProcessor, MonoProcessor, OversampleX4,
 };
 use clip::math_utils::{fast_powf, faster_powf, fastest_powf};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
@@ -145,9 +145,16 @@ fn bench_powf(c: &mut Criterion) {
 
 fn bench_oversample(c: &mut Criterion) {
     let mut os = OversampleX4::new(IdentityProcessor());
-    c.bench_function("oversample", |b| {
+    let mut os_fast = FastOversampleX4::new(IdentityProcessor());
+    let mut group = c.benchmark_group("oversample");
+    group.bench_function("unopt", |b| {
         b.iter(|| {
             black_box(os.step(black_box(0.5)));
+        })
+    });
+    group.bench_function("fast", |b| {
+        b.iter(|| {
+            black_box(os_fast.step(black_box(0.5)));
         })
     });
 }

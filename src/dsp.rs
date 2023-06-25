@@ -14,6 +14,7 @@ use crate::math_utils::{
 };
 
 use self::ring_buffer::RingBuffer;
+use self::ring_buffer::SmallRingBuffer;
 
 // TODO: this is necessary because rust does not have const generic expressions
 const LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2: usize = LP_FIR_2X_TO_1X_MINIMUM_LEN / 2;
@@ -402,6 +403,10 @@ pub struct OversampleX4<P: MonoProcessor> {
     up_delay_line_x4: RingBuffer<LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2_PLUS_1>,
     down_delay_line_x2: RingBuffer<LP_FIR_2X_TO_1X_MINIMUM_LEN_PLUS_1>,
     down_delay_line_x4: RingBuffer<LP_FIR_4X_TO_2X_MINIMUM_LEN_PLUS_1>,
+    // up_delay_line_x2: RingBuffer<256>,
+    // up_delay_line_x4: RingBuffer<256>,
+    // down_delay_line_x2: RingBuffer<256>,
+    // down_delay_line_x4: RingBuffer<256>,
 }
 
 impl<P: MonoProcessor> OversampleX4<P> {
@@ -421,7 +426,7 @@ impl<P: MonoProcessor> OversampleX4<P> {
         // 2x even step
         let even = {
             let mut a = 0.0f32;
-            for i in 0..(self.up_delay_line_x2.len() - 1) {
+            for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
                 let coeff = LP_FIR_2X_TO_1X_MINIMUM[i * 2];
                 a += self.up_delay_line_x2.tap(i) * coeff;
             }
@@ -431,7 +436,7 @@ impl<P: MonoProcessor> OversampleX4<P> {
         // 2x odd step
         let odd = {
             let mut a = 0.0f32;
-            for i in 0..(self.up_delay_line_x2.len() - 1) {
+            for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
                 let coeff = LP_FIR_2X_TO_1X_MINIMUM[1 + i * 2];
                 a += self.up_delay_line_x2.tap(i) * coeff;
             }
@@ -447,7 +452,7 @@ impl<P: MonoProcessor> OversampleX4<P> {
         // 4x even step
         let even = {
             let mut a = 0.0f32;
-            for i in 0..(self.up_delay_line_x4.len() - 1) {
+            for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
                 let coeff = LP_FIR_4X_TO_2X_MINIMUM[i * 2];
                 a += self.up_delay_line_x4.tap(i) * coeff;
             }
@@ -457,7 +462,7 @@ impl<P: MonoProcessor> OversampleX4<P> {
         // 4x odd step
         let odd = {
             let mut a = 0.0f32;
-            for i in 0..(self.up_delay_line_x4.len() - 1) {
+            for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
                 let coeff = LP_FIR_4X_TO_2X_MINIMUM[1 + i * 2];
                 a += self.up_delay_line_x4.tap(i) * coeff;
             }
@@ -472,7 +477,7 @@ impl<P: MonoProcessor> OversampleX4<P> {
         self.down_delay_line_x4.push(x1);
 
         let mut a = 0.0f32;
-        for i in 0..(self.down_delay_line_x4.len() - 1) {
+        for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len()) {
             let coeff = LP_FIR_4X_TO_2X_MINIMUM[i];
             a += self.down_delay_line_x4.tap(i) * coeff;
         }
@@ -484,7 +489,7 @@ impl<P: MonoProcessor> OversampleX4<P> {
         self.down_delay_line_x2.push(x1);
 
         let mut a = 0.0f32;
-        for i in 0..(self.down_delay_line_x2.len() - 1) {
+        for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len()) {
             let coeff = LP_FIR_2X_TO_1X_MINIMUM[i];
             a += self.down_delay_line_x2.tap(i) * coeff;
         }
@@ -493,6 +498,140 @@ impl<P: MonoProcessor> OversampleX4<P> {
 }
 
 impl<P: MonoProcessor> MonoProcessor for OversampleX4<P> {
+    fn step(&mut self, x: f32) -> f32 {
+        // get 4 consecutive upsampled samples from 1 input sample
+        let (x0, x1) = self.step_up_2x(x);
+        let (x00, x01) = self.step_up_4x(x0);
+        let (x10, x11) = self.step_up_4x(x1);
+
+        let y = self
+            .inner_processor
+            .process_simd_4(f32x4::new([x00, x01, x10, x11]));
+        let y = y.as_array_ref();
+
+        let y0 = self.step_down_4x(y[0], y[1]);
+        let y1 = self.step_down_4x(y[2], y[3]);
+        // let y00 = self.inner_processor.step(x00);
+        // let y01 = self.inner_processor.step(x01);
+        // let y10 = self.inner_processor.step(x10);
+        // let y11 = self.inner_processor.step(x11);
+        // let y0 = self.step_down_4x(y00, y01);
+        // let y1 = self.step_down_4x(y10, y11);
+        self.step_down_2x(y0, y1)
+    }
+
+    fn reset(&mut self) {
+        self.up_delay_line_x2.reset();
+        self.up_delay_line_x4.reset();
+        self.down_delay_line_x2.reset();
+        self.down_delay_line_x4.reset();
+    }
+
+    fn initialize(&mut self) {}
+}
+
+#[derive(Debug, Clone)]
+pub struct FastOversampleX4<P: MonoProcessor> {
+    pub inner_processor: P,
+    // up_delay_line_x2: RingBuffer<LP_FIR_2X_TO_1X_MINIMUM_LEN_FRAC_2_PLUS_1>,
+    // up_delay_line_x4: RingBuffer<LP_FIR_4X_TO_2X_MINIMUM_LEN_FRAC_2_PLUS_1>,
+    // down_delay_line_x2: RingBuffer<LP_FIR_2X_TO_1X_MINIMUM_LEN_PLUS_1>,
+    // down_delay_line_x4: RingBuffer<LP_FIR_4X_TO_2X_MINIMUM_LEN_PLUS_1>,
+    up_delay_line_x2: SmallRingBuffer,
+    up_delay_line_x4: SmallRingBuffer,
+    down_delay_line_x2: SmallRingBuffer,
+    down_delay_line_x4: SmallRingBuffer,
+}
+
+impl<P: MonoProcessor> FastOversampleX4<P> {
+    pub fn new(inner_processor: P) -> Self {
+        Self {
+            inner_processor: inner_processor,
+            up_delay_line_x2: SmallRingBuffer::new(),
+            up_delay_line_x4: SmallRingBuffer::new(),
+            down_delay_line_x2: SmallRingBuffer::new(),
+            down_delay_line_x4: SmallRingBuffer::new(),
+        }
+    }
+
+    fn step_up_2x(&mut self, x: f32) -> (f32, f32) {
+        self.up_delay_line_x2.push(x);
+
+        // 2x even step
+        let even = {
+            let mut a = 0.0f32;
+            for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
+                let coeff = LP_FIR_2X_TO_1X_MINIMUM[i * 2];
+                a += self.up_delay_line_x2.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        // 2x odd step
+        let odd = {
+            let mut a = 0.0f32;
+            for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
+                let coeff = LP_FIR_2X_TO_1X_MINIMUM[1 + i * 2];
+                a += self.up_delay_line_x2.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        (even, odd)
+    }
+
+    fn step_up_4x(&mut self, x: f32) -> (f32, f32) {
+        self.up_delay_line_x4.push(x);
+
+        // 4x even step
+        let even = {
+            let mut a = 0.0f32;
+            for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
+                let coeff = LP_FIR_4X_TO_2X_MINIMUM[i * 2];
+                a += self.up_delay_line_x4.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        // 4x odd step
+        let odd = {
+            let mut a = 0.0f32;
+            for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
+                let coeff = LP_FIR_4X_TO_2X_MINIMUM[1 + i * 2];
+                a += self.up_delay_line_x4.tap(i) * coeff;
+            }
+            a * 2.0
+        };
+
+        (even, odd)
+    }
+
+    fn step_down_4x(&mut self, x0: f32, x1: f32) -> f32 {
+        self.down_delay_line_x4.push(x0);
+        self.down_delay_line_x4.push(x1);
+
+        let mut a = 0.0f32;
+        for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len()) {
+            let coeff = LP_FIR_4X_TO_2X_MINIMUM[i];
+            a += self.down_delay_line_x4.tap(i) * coeff;
+        }
+        a
+    }
+
+    fn step_down_2x(&mut self, x0: f32, x1: f32) -> f32 {
+        self.down_delay_line_x2.push(x0);
+        self.down_delay_line_x2.push(x1);
+
+        let mut a = 0.0f32;
+        for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len()) {
+            let coeff = LP_FIR_2X_TO_1X_MINIMUM[i];
+            a += self.down_delay_line_x2.tap(i) * coeff;
+        }
+        a
+    }
+}
+
+impl<P: MonoProcessor> MonoProcessor for FastOversampleX4<P> {
     fn step(&mut self, x: f32) -> f32 {
         // get 4 consecutive upsampled samples from 1 input sample
         let (x0, x1) = self.step_up_2x(x);
