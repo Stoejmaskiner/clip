@@ -20,7 +20,7 @@ pub mod dsp;
 mod editor;
 mod filter_coefficients;
 // mod luts;
-mod math_utils;
+pub mod math_utils;
 mod params;
 mod processors;
 mod widgets;
@@ -200,13 +200,13 @@ impl Plugin for Clip {
         self.params.clone()
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(
-            self.params.clone(),
-            self.plot.clone(),
-            self.params.editor_state.clone(),
-        )
-    }
+    // fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    //     editor::create(
+    //         self.params.clone(),
+    //         self.plot.clone(),
+    //         self.params.editor_state.clone(),
+    //     )
+    // }
 
     fn initialize(
         &mut self,

@@ -70,7 +70,7 @@ impl MonoProcessor for MainDistortionProcessor {
 
     fn process_simd_4(&mut self, x: wide::f32x4) -> wide::f32x4 {
         let y = self.pre_gain() * x;
-        let y = dsp::var_hard_clip_simd_4(y, self.hardness);
+        let y = dsp::inline_var_hard_clip_fast_simd_4(y, self.hardness);
         let y = self.post_gain() * y;
         x.lerp(y, self.mix)
     }

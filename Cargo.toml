@@ -34,6 +34,7 @@ num-traits = "0.2.15"
 static_assertions = "1.1.0"
 fastapprox = "0.3.0"
 wide = { version = "0.7.10", features = ["std"] }
+fast-math = "0.1.1"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

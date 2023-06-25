@@ -8,7 +8,10 @@ use crate::filter_coefficients::LP_FIR_2X_TO_1X_MINIMUM;
 use crate::filter_coefficients::LP_FIR_2X_TO_1X_MINIMUM_LEN;
 use crate::filter_coefficients::LP_FIR_4X_TO_2X_MINIMUM;
 use crate::filter_coefficients::LP_FIR_4X_TO_2X_MINIMUM_LEN;
-use crate::math_utils::Lerpable;
+use crate::math_utils::{
+    fast_powf, fast_powf_simd, faster_powf, faster_powf_simd, fastest_powf, fastest_powf_simd,
+    Lerpable,
+};
 
 use self::ring_buffer::RingBuffer;
 
@@ -48,6 +51,63 @@ pub fn var_hard_clip(x: f32, hardness: f32) -> f32 {
     analog * (1.0 - fade) + digital * fade
 }
 
+pub fn var_hard_clip_fast(x: f32, hardness: f32) -> f32 {
+    // hardness above this limit causes numerical instability
+    const MAX_HARDNESS: f32 = 0.935;
+
+    // input amplitude over this range (linear scale) causes numerical instability
+    const STABILITY_RANGE: f32 = 16.0;
+
+    // safety first, avoids NaN later
+    let x = x.clamp(-STABILITY_RANGE, STABILITY_RANGE);
+
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / fast_powf(1.0 + fast_powf(x.abs(), softness.recip()), softness);
+    //let analog = x / faster::pow(1.0 + faster::pow(x.abs(), softness.recip()), softness);
+    let digital = x.clamp(-1.0, 1.0);
+    analog * (1.0 - fade) + digital * fade
+}
+
+pub fn var_hard_clip_faster(x: f32, hardness: f32) -> f32 {
+    // hardness above this limit causes numerical instability
+    const MAX_HARDNESS: f32 = 0.935;
+
+    // input amplitude over this range (linear scale) causes numerical instability
+    const STABILITY_RANGE: f32 = 16.0;
+
+    // safety first, avoids NaN later
+    let x = x.clamp(-STABILITY_RANGE, STABILITY_RANGE);
+
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / faster_powf(1.0 + faster_powf(x.abs(), softness.recip()), softness);
+    //let analog = x / faster::pow(1.0 + faster::pow(x.abs(), softness.recip()), softness);
+    let digital = x.clamp(-1.0, 1.0);
+    analog * (1.0 - fade) + digital * fade
+}
+
+pub fn var_hard_clip_fastest(x: f32, hardness: f32) -> f32 {
+    // hardness above this limit causes numerical instability
+    const MAX_HARDNESS: f32 = 0.935;
+
+    // input amplitude over this range (linear scale) causes numerical instability
+    const STABILITY_RANGE: f32 = 16.0;
+
+    // safety first, avoids NaN later
+    let x = x.clamp(-STABILITY_RANGE, STABILITY_RANGE);
+
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / fastest_powf(1.0 + fastest_powf(x.abs(), softness.recip()), softness);
+    //let analog = x / faster::pow(1.0 + faster::pow(x.abs(), softness.recip()), softness);
+    let digital = x.clamp(-1.0, 1.0);
+    analog * (1.0 - fade) + digital * fade
+}
+
 pub fn var_hard_clip_simd_4(x: f32x4, hardness: f32) -> f32x4 {
     const MAX_HARDNESS: f32 = 0.935;
     const STABILITY_RANGE: f32 = 16.0;
@@ -62,64 +122,147 @@ pub fn var_hard_clip_simd_4(x: f32x4, hardness: f32) -> f32x4 {
     analog * (1.0 - fade) + digital * fade
 }
 
-fn clip_hardness_neg(x: f32) -> f32 {
-    x / (1.0 + x.abs())
+pub fn var_hard_clip_fast_simd_4(x: f32x4, hardness: f32) -> f32x4 {
+    const MAX_HARDNESS: f32 = 0.935;
+    const STABILITY_RANGE: f32 = 16.0;
+    let x = x
+        .fast_min(f32x4::splat(STABILITY_RANGE))
+        .fast_max(f32x4::splat(-STABILITY_RANGE));
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / fast_powf_simd(1.0 + fast_powf_simd(x.abs(), softness.recip()), softness);
+    let digital = x.fast_min(f32x4::splat(1.0)).fast_max(f32x4::splat(-1.0));
+    analog * (1.0 - fade) + digital * fade
 }
 
-// TODO: probably inline
-fn clip_hardness_0p0(x: f32) -> f32 {
-    x / (1.0 + x * x).sqrt()
+pub fn var_hard_clip_faster_simd_4(x: f32x4, hardness: f32) -> f32x4 {
+    const MAX_HARDNESS: f32 = 0.935;
+    const STABILITY_RANGE: f32 = 16.0;
+    let x = x
+        .fast_min(f32x4::splat(STABILITY_RANGE))
+        .fast_max(f32x4::splat(-STABILITY_RANGE));
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / faster_powf_simd(1.0 + faster_powf_simd(x.abs(), softness.recip()), softness);
+    let digital = x.fast_min(f32x4::splat(1.0)).fast_max(f32x4::splat(-1.0));
+    analog * (1.0 - fade) + digital * fade
 }
 
-fn clip_hardness_0p5(x: f32) -> f32 {
-    let x_pow_2 = x * x;
-    x / (1.0 + x_pow_2 * x_pow_2).sqrt().sqrt()
+pub fn var_hard_clip_fastest_simd_4(x: f32x4, hardness: f32) -> f32x4 {
+    const MAX_HARDNESS: f32 = 0.935;
+    const STABILITY_RANGE: f32 = 16.0;
+    let x = x
+        .fast_min(f32x4::splat(STABILITY_RANGE))
+        .fast_max(f32x4::splat(-STABILITY_RANGE));
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog =
+        x / fastest_powf_simd(1.0 + fastest_powf_simd(x.abs(), softness.recip()), softness);
+    let digital = x.fast_min(f32x4::splat(1.0)).fast_max(f32x4::splat(-1.0));
+    analog * (1.0 - fade) + digital * fade
 }
 
-fn clip_hardness_0p75(x: f32) -> f32 {
-    let x_pow_2 = x * x;
-    let x_pow_4 = x_pow_2 * x_pow_2;
-    x / (1.0 + x_pow_4 * x_pow_4).sqrt().sqrt().sqrt()
+pub fn inline_var_hard_clip_fast(x: f32, hardness: f32) -> f32 {
+    // hardness above this limit causes numerical instability
+    const MAX_HARDNESS: f32 = 0.935;
+
+    // input amplitude over this range (linear scale) causes numerical instability
+    const STABILITY_RANGE: f32 = 16.0;
+
+    // safety first, avoids NaN later
+    let x = x.clamp(-STABILITY_RANGE, STABILITY_RANGE);
+
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / fast_powf(1.0 + fast_powf(x.abs(), softness.recip()), softness);
+    //let analog = x / faster::pow(1.0 + faster::pow(x.abs(), softness.recip()), softness);
+    let digital = x.clamp(-1.0, 1.0);
+    analog * (1.0 - fade) + digital * fade
 }
 
-fn clip_hardness_0p875(x: f32) -> f32 {
-    let x_pow_2 = x * x;
-    let x_pow_4 = x_pow_2 * x_pow_2;
-    let x_pow_8 = x_pow_4 * x_pow_4;
-    x / (1.0 + x_pow_8 * x_pow_8).sqrt().sqrt().sqrt().sqrt()
+pub fn inline_var_hard_clip_faster(x: f32, hardness: f32) -> f32 {
+    // hardness above this limit causes numerical instability
+    const MAX_HARDNESS: f32 = 0.935;
+
+    // input amplitude over this range (linear scale) causes numerical instability
+    const STABILITY_RANGE: f32 = 16.0;
+
+    // safety first, avoids NaN later
+    let x = x.clamp(-STABILITY_RANGE, STABILITY_RANGE);
+
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / faster_powf(1.0 + faster_powf(x.abs(), softness.recip()), softness);
+    //let analog = x / faster::pow(1.0 + faster::pow(x.abs(), softness.recip()), softness);
+    let digital = x.clamp(-1.0, 1.0);
+    analog * (1.0 - fade) + digital * fade
 }
 
-fn clip_hardness_0p9375(x: f32) -> f32 {
-    let x_pow_2 = x * x;
-    let x_pow_4 = x_pow_2 * x_pow_2;
-    let x_pow_8 = x_pow_4 * x_pow_4;
-    let x_pow_16 = x_pow_8 * x_pow_8;
-    x / (1.0 + x_pow_16 * x_pow_16)
-        .sqrt()
-        .sqrt()
-        .sqrt()
-        .sqrt()
-        .sqrt()
+pub fn inline_var_hard_clip_fastest(x: f32, hardness: f32) -> f32 {
+    // hardness above this limit causes numerical instability
+    const MAX_HARDNESS: f32 = 0.935;
+
+    // input amplitude over this range (linear scale) causes numerical instability
+    const STABILITY_RANGE: f32 = 16.0;
+
+    // safety first, avoids NaN later
+    let x = x.clamp(-STABILITY_RANGE, STABILITY_RANGE);
+
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / fastest_powf(1.0 + fastest_powf(x.abs(), softness.recip()), softness);
+    //let analog = x / faster::pow(1.0 + faster::pow(x.abs(), softness.recip()), softness);
+    let digital = x.clamp(-1.0, 1.0);
+    analog * (1.0 - fade) + digital * fade
 }
 
-fn clip_hardness_0p96875(x: f32) -> f32 {
-    let x_pow_2 = x * x;
-    let x_pow_4 = x_pow_2 * x_pow_2;
-    let x_pow_8 = x_pow_4 * x_pow_4;
-    let x_pow_16 = x_pow_8 * x_pow_8;
-    let x_pow_32 = x_pow_16 * x_pow_16;
-    x / (1.0 + x_pow_32 * x_pow_32)
-        .sqrt()
-        .sqrt()
-        .sqrt()
-        .sqrt()
-        .sqrt()
-        .sqrt()
+pub fn inline_var_hard_clip_fast_simd_4(x: f32x4, hardness: f32) -> f32x4 {
+    const MAX_HARDNESS: f32 = 0.935;
+    const STABILITY_RANGE: f32 = 16.0;
+    let x = x
+        .fast_min(f32x4::splat(STABILITY_RANGE))
+        .fast_max(f32x4::splat(-STABILITY_RANGE));
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / fast_powf_simd(1.0 + fast_powf_simd(x.abs(), softness.recip()), softness);
+    let digital = x.fast_min(f32x4::splat(1.0)).fast_max(f32x4::splat(-1.0));
+    analog * (1.0 - fade) + digital * fade
 }
 
-// TODO: probably inline
-fn clip_hardness_1p0(x: f32) -> f32 {
-    x.clamp(-1.0, 1.0)
+pub fn inline_var_hard_clip_faster_simd_4(x: f32x4, hardness: f32) -> f32x4 {
+    const MAX_HARDNESS: f32 = 0.935;
+    const STABILITY_RANGE: f32 = 16.0;
+    let x = x
+        .fast_min(f32x4::splat(STABILITY_RANGE))
+        .fast_max(f32x4::splat(-STABILITY_RANGE));
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog = x / faster_powf_simd(1.0 + faster_powf_simd(x.abs(), softness.recip()), softness);
+    let digital = x.fast_min(f32x4::splat(1.0)).fast_max(f32x4::splat(-1.0));
+    analog * (1.0 - fade) + digital * fade
+}
+
+pub fn inline_var_hard_clip_fastest_simd_4(x: f32x4, hardness: f32) -> f32x4 {
+    const MAX_HARDNESS: f32 = 0.935;
+    const STABILITY_RANGE: f32 = 16.0;
+    let x = x
+        .fast_min(f32x4::splat(STABILITY_RANGE))
+        .fast_max(f32x4::splat(-STABILITY_RANGE));
+    let clamped_hardness = hardness.min(MAX_HARDNESS);
+    let fade = (hardness - clamped_hardness) / (1.0 - MAX_HARDNESS);
+    let softness = 1.0 - clamped_hardness * 0.5 - 0.5;
+    let analog =
+        x / fastest_powf_simd(1.0 + fastest_powf_simd(x.abs(), softness.recip()), softness);
+    let digital = x.fast_min(f32x4::splat(1.0)).fast_max(f32x4::splat(-1.0));
+    analog * (1.0 - fade) + digital * fade
 }
 
 // /// processor version of `var_hard_clip`
@@ -363,8 +506,13 @@ impl<P: MonoProcessor> MonoProcessor for OversampleX4<P> {
 
         let y0 = self.step_down_4x(y[0], y[1]);
         let y1 = self.step_down_4x(y[2], y[3]);
+        // let y00 = self.inner_processor.step(x00);
+        // let y01 = self.inner_processor.step(x01);
+        // let y10 = self.inner_processor.step(x10);
+        // let y11 = self.inner_processor.step(x11);
+        // let y0 = self.step_down_4x(y00, y01);
+        // let y1 = self.step_down_4x(y10, y11);
         self.step_down_2x(y0, y1)
-        //self.inner_processor.step(x)
     }
 
     fn reset(&mut self) {
