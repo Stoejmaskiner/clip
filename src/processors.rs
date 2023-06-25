@@ -25,34 +25,30 @@ impl MainDistortionProcessor {
     }
 
     fn drive_compensation(&self) -> f32 {
-        /// fade between two gain matching techniques, 1.0 preserves 0dB peaks,
-        /// making the signal louder as drive increases, 0.0 has constant gain and
-        /// just lowers the threshold with more drive, decreasing loudness.
-        ///
-        /// This is tuned by hand such that at max drive the perceived loudness of an
-        /// input at -6 dbFS is preserved. This cannot be computed as it is highly
-        /// subjective, and it depends on context and psychoacustics. It's one of
-        /// those "chef's parameters". In this case, various drum loops and full
-        /// mixdowns were normalized to -6 dBFS and this parameter was fine tuned
-        /// to produce an apparent equal loudness at full drive. Note that changing
-        /// the range of the drive parameter will require re-calibrating.
-        const CALIBRATION: f32 = 0.875;
-        const INV_CALIBRATION: f32 = 1.0 - CALIBRATION;
+        // the post-gain normally decreases linearly as the input
+        // drive increases linearly. This GAMMA parameter is an exponent
+        // to this relationship, which moves the mid-point up and down.
+        // This is exacly like the gamma transform from image processing,
+        // but scaled so that the effect only happens for drive > 2.
+        const GAMMA: f32 = 0.45;
 
-        // TODO: the minimum and maximum value of `drive` get it in some less idiotic way
-        const MAX_DRIVE: f32 = 63.095734;
-        const _MIN_DRIVE: f32 = 0.5011872;
+        // compensation coefficient that makes the output peak be 0 dBFS when
+        // the input peak is 0 dBFS, regardless of drive. This is useful as
+        // a blank slate for designing a second compensation coefficient
+        // as a function of drive
+        let compensate_to_unity = 1.0_f32
+            .max(dsp::var_hard_clip(self.drive, self.hardness))
+            .recip();
 
-        // TODO: range-independent gamma-like transformation, you take the reciprocal of
-        //       the drive, as the drive can go from 0 to infinity (clipping negative values
-        //       to 0), and use that to get a [0; 1] t-value to index a LUT of some kind
+        // compensation coefficient that applies a gamma transformation
+        // to the reciprocal of drive to derive the post gain, adjusting
+        // the gamma value changes the midpoint loudness of the drive
+        // parameter while leaving the extremes unaffected
+        let drive_recip = self.drive.recip();
+        let drive_recip_2 = 2.0 * drive_recip;
+        let compensate_gamma = drive_recip_2.max(drive_recip_2.powf(GAMMA)) / 2.0;
 
-        let t = self.drive.clamped_inverse_lerp(1.0, MAX_DRIVE);
-
-        let comp = dsp::var_hard_clip(self.drive, self.hardness) * CALIBRATION
-            + self.drive * INV_CALIBRATION;
-
-        comp
+        compensate_to_unity * compensate_gamma
     }
 
     fn pre_gain(&self) -> f32 {
@@ -60,7 +56,7 @@ impl MainDistortionProcessor {
     }
 
     fn post_gain(&self) -> f32 {
-        self.threshold / self.drive_compensation() * self.post_gain
+        self.threshold * self.drive_compensation() * self.post_gain
     }
 }
 
@@ -68,6 +64,13 @@ impl MonoProcessor for MainDistortionProcessor {
     fn step(&mut self, x: f32) -> f32 {
         let y = self.pre_gain() * x;
         let y = dsp::var_hard_clip(y, self.hardness);
+        let y = self.post_gain() * y;
+        x.lerp(y, self.mix)
+    }
+
+    fn process_simd_4(&mut self, x: wide::f32x4) -> wide::f32x4 {
+        let y = self.pre_gain() * x;
+        let y = dsp::var_hard_clip_simd_4(y, self.hardness);
         let y = self.post_gain() * y;
         x.lerp(y, self.mix)
     }

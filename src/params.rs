@@ -109,7 +109,7 @@ impl Default for ClipParams {
                 "Drive",
                 util::db_to_gain(0.0),
                 FloatRange::Skewed {
-                    min: util::db_to_gain(-6.0),
+                    min: util::db_to_gain(0.0),
                     max: util::db_to_gain(36.0),
                     factor: FloatRange::gain_skew_factor(-6.0, 36.0),
                 },

@@ -16,7 +16,7 @@ use widgets::Plot1DData;
 
 use crate::{dsp::var_hard_clip, math_utils::Lerpable};
 
-mod dsp;
+pub mod dsp;
 mod editor;
 mod filter_coefficients;
 // mod luts;

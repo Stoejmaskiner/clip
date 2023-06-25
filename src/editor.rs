@@ -94,7 +94,7 @@ pub(crate) fn create<const N: usize>(
                     Label::new(cx, "[TP001]").font_size(24.0).color(Color::rgba(0,0,0,128))
                 };
                 with_gizmos! {
-                    Label::new(cx, "[v0.1.0]").font_size(24.0).color(Color::rgba(0,0,0,128))
+                    Label::new(cx, &("[v".to_owned() + &env!("CARGO_PKG_VERSION") + "]")).font_size(24.0).color(Color::rgba(0,0,0,128))
                 };
             })
             .height(Auto);

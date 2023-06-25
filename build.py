@@ -36,41 +36,48 @@ def main():
         ],
         nargs="+",
     )
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--prof", action="store_true")
 
     args = parser.parse_args()
 
     for a in args.actions:
         match a:
             case "dev-install":
-                dev_install()
+                dev_install(args.release, args.prof)
             case "generate-filters":
-                generate_filters()
+                generate_filters(args.release, args.prof)
             case "build":
-                build()
+                build(args.release, args.prof)
             case "deploy":
-                deploy()
+                deploy(args.release, args.prof)
             case "run":
-                run()
+                run(args.release, args.prof)
             case "debug":
-                debug()
+                debug(args.release, args.prof)
             case "lint":
-                lint()
+                lint(args.release, args.prof)
             case "fix":
-                fix()
+                fix(args.release, args.prof)
             case _:
-                assert_never()
+                assert_never(args.actions)
 
 
 @functools.cache
-def build():
-    subprocess.run(
-        ["cargo", "xtask", "bundle", cargo_config["package"]["name"]], check=True
-    )
+def build(release, prof):
+    if release and prof:
+        raise ValueError("can't use --release and --prof at the same time")
+    cmd = ["cargo", "xtask", "bundle", cargo_config["package"]["name"]]
+    if release:
+        cmd.extend(["--release"])
+    if prof:
+        cmd.extend(["--profile", "profiling"])
+    subprocess.run(cmd, check=True)
 
 
 @functools.cache
-def deploy():
-    build()
+def deploy(release, prof):
+    build(release, prof)
     name = bundler_config[cargo_config["package"]["name"]]["name"]
     vst3_source = PosixPath(f"./target/bundled/{name}.vst3")
     clap_source = PosixPath(f"./target/bundled/{name}.clap")
@@ -87,19 +94,19 @@ def deploy():
 
 
 @functools.cache
-def run():
-    deploy()
+def run(release, prof):
+    deploy(release, prof)
     subprocess.run(build_config["run_command"], check=True)
 
 
 @functools.cache
-def debug():
+def debug(release, prof):
     # subprocess.run(["cargo", "run", "--features", "draw_gizmos"])
     subprocess.run(["cargo", "run"])
 
 
 @functools.cache
-def dev_install():
+def dev_install(release, prof):
     os_version = platform.version().lower()
     if "ubuntu" in os_version:
         subprocess.run(["sudo", "apt-get", "update"])
@@ -114,17 +121,17 @@ def dev_install():
 
 
 @functools.cache
-def lint():
+def lint(release, prof):
     subprocess.run(["cargo", "clippy", "--", "-W", "clippy::pedantic"])
 
 
 @functools.cache
-def fix():
+def fix(release, prof):
     subprocess.run(["cargo", "clippy", "--fix", "--", "-W", "clippy::pedantic"])
 
 
 @functools.cache
-def generate_filters():
+def generate_filters(release, prof):
     with open("src/dsp/filter_coefficients.rs", "w") as f:
         subprocess.run(["python3", "scripts/generate_filters.py"], stdout=f)
 

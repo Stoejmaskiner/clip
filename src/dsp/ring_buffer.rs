@@ -30,6 +30,7 @@ impl<const N: usize> RingBuffer<N> {
         self.buffer[idx]
     }
 
+    #[inline]
     pub(super) fn len(&self) -> usize {
         N
     }

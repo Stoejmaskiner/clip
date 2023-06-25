@@ -1,3 +1,5 @@
+use wide::{f32x4, f32x8};
+
 /// Linear interpolation, implementing `lerp()` gives you a lot of other utility
 /// functions for free.
 pub trait Lerpable: Sized {
@@ -52,4 +54,34 @@ impl Lerpable for f32 {
     fn inverse_lerp(&self, min: f32, max: f32) -> f32 {
         (self - min) / (max - min)
     }
+}
+
+impl Lerpable for f32x4 {
+    fn lerp(&self, other: f32x4, t: f32) -> f32x4 {
+        (1.0 - t) * *self + t * other
+    }
+
+    fn inverse_lerp(&self, min: f32x4, max: f32x4) -> f32 {
+        unimplemented!()
+    }
+}
+
+impl Lerpable for f32x8 {
+    fn lerp(&self, other: f32x8, t: f32) -> f32x8 {
+        (1.0 - t) * *self + t * other
+    }
+
+    fn inverse_lerp(&self, min: f32x8, max: f32x8) -> f32 {
+        unimplemented!()
+    }
+}
+
+/// perform Catmull-Rom interpolation between two points `x1` and `x2`, with
+/// two control points `x0` and `x2` and interpolation parameter `t` in `0..1`
+pub fn catmull_rom_interp(x0: f32, x1: f32, x2: f32, x3: f32, t: f32) -> f32 {
+    let q0 = (-1.0 * t * t * t) + (2.0 * t * t) + (-1.0 * t);
+    let q1 = (3.0 * t * t * t) + (-5.0 * t * t) + 2.0;
+    let q2 = (-3.0 * t * t * t) + (4.0 * t * t) + t;
+    let q3 = t * t * t - t * t;
+    0.5 * (x0 * q0 + x1 * q1 + x2 * q2 + x3 * q3)
 }
