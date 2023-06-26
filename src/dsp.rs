@@ -558,24 +558,40 @@ impl<P: MonoProcessor> FastOversampleX4<P> {
         self.up_delay_line_x2.push(x);
 
         // 2x even step
-        let even = {
-            let mut a = 0.0f32;
-            for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
-                let coeff = LP_FIR_2X_TO_1X_MINIMUM[i * 2];
-                a += self.up_delay_line_x2.tap(i) * coeff;
-            }
-            a * 2.0
-        };
+        let even =
+            // let mut a = 0.0f32;
+            // for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
+            //     let coeff = LP_FIR_2X_TO_1X_MINIMUM[i * 2];
+            //     a += self.up_delay_line_x2.tap(i) * coeff;
+            // }
+
+            LP_FIR_2X_TO_1X_MINIMUM
+                .iter()
+                .step_by(2)
+                .enumerate()
+                .map(|p| self.up_delay_line_x2.tap(p.0) * p.1)
+                .reduce(|a, e| a + e)
+                .unwrap()
+                * 2.0;
 
         // 2x odd step
-        let odd = {
-            let mut a = 0.0f32;
-            for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
-                let coeff = LP_FIR_2X_TO_1X_MINIMUM[1 + i * 2];
-                a += self.up_delay_line_x2.tap(i) * coeff;
-            }
-            a * 2.0
-        };
+        // let odd = {
+        //     let mut a = 0.0f32;
+        //     for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len() / 2) {
+        //         let coeff = LP_FIR_2X_TO_1X_MINIMUM[1 + i * 2];
+        //         a += self.up_delay_line_x2.tap(i) * coeff;
+        //     }
+        //     a * 2.0
+        // };
+        let odd = LP_FIR_2X_TO_1X_MINIMUM
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .enumerate()
+            .map(|p| self.up_delay_line_x2.tap(p.0) * p.1)
+            .reduce(|a, e| a + e)
+            .unwrap()
+            * 2.0;
 
         (even, odd)
     }
@@ -584,24 +600,41 @@ impl<P: MonoProcessor> FastOversampleX4<P> {
         self.up_delay_line_x4.push(x);
 
         // 4x even step
-        let even = {
-            let mut a = 0.0f32;
-            for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
-                let coeff = LP_FIR_4X_TO_2X_MINIMUM[i * 2];
-                a += self.up_delay_line_x4.tap(i) * coeff;
-            }
-            a * 2.0
-        };
+        // let even = {
+        //     let mut a = 0.0f32;
+        //     for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
+        //         let coeff = LP_FIR_4X_TO_2X_MINIMUM[i * 2];
+        //         a += self.up_delay_line_x4.tap(i) * coeff;
+        //     }
+        //     a * 2.0
+        // };
+        let even = LP_FIR_4X_TO_2X_MINIMUM
+            .iter()
+            .step_by(2)
+            .enumerate()
+            .map(|p| self.up_delay_line_x4.tap(p.0) * p.1)
+            .reduce(|a, e| a + e)
+            .unwrap()
+            * 2.0;
 
         // 4x odd step
-        let odd = {
-            let mut a = 0.0f32;
-            for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
-                let coeff = LP_FIR_4X_TO_2X_MINIMUM[1 + i * 2];
-                a += self.up_delay_line_x4.tap(i) * coeff;
-            }
-            a * 2.0
-        };
+        // let odd = {
+        //     let mut a = 0.0f32;
+        //     for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len() / 2) {
+        //         let coeff = LP_FIR_4X_TO_2X_MINIMUM[1 + i * 2];
+        //         a += self.up_delay_line_x4.tap(i) * coeff;
+        //     }
+        //     a * 2.0
+        // };
+        let odd = LP_FIR_4X_TO_2X_MINIMUM
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .enumerate()
+            .map(|p| self.up_delay_line_x4.tap(p.0) * p.1)
+            .reduce(|a, e| a + e)
+            .unwrap()
+            * 2.0;
 
         (even, odd)
     }
@@ -610,24 +643,38 @@ impl<P: MonoProcessor> FastOversampleX4<P> {
         self.down_delay_line_x4.push(x0);
         self.down_delay_line_x4.push(x1);
 
-        let mut a = 0.0f32;
-        for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len()) {
-            let coeff = LP_FIR_4X_TO_2X_MINIMUM[i];
-            a += self.down_delay_line_x4.tap(i) * coeff;
-        }
-        a
+        // let mut a = 0.0f32;
+        // for i in 0..(LP_FIR_4X_TO_2X_MINIMUM.len()) {
+        //     let coeff = LP_FIR_4X_TO_2X_MINIMUM[i];
+        //     a += self.down_delay_line_x4.tap(i) * coeff;
+        // }
+        // a;
+
+        LP_FIR_4X_TO_2X_MINIMUM
+            .iter()
+            .enumerate()
+            .map(|p| self.down_delay_line_x4.tap(p.0) * p.1)
+            .reduce(|a, e| a + e)
+            .unwrap()
     }
 
     fn step_down_2x(&mut self, x0: f32, x1: f32) -> f32 {
         self.down_delay_line_x2.push(x0);
         self.down_delay_line_x2.push(x1);
 
-        let mut a = 0.0f32;
-        for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len()) {
-            let coeff = LP_FIR_2X_TO_1X_MINIMUM[i];
-            a += self.down_delay_line_x2.tap(i) * coeff;
-        }
-        a
+        // let mut a = 0.0f32;
+        // for i in 0..(LP_FIR_2X_TO_1X_MINIMUM.len()) {
+        //     let coeff = LP_FIR_2X_TO_1X_MINIMUM[i];
+        //     a += self.down_delay_line_x2.tap(i) * coeff;
+        // }
+        // a
+
+        LP_FIR_2X_TO_1X_MINIMUM
+            .iter()
+            .enumerate()
+            .map(|p| self.down_delay_line_x2.tap(p.0) * p.1)
+            .reduce(|a, e| a + e)
+            .unwrap()
     }
 }
 
