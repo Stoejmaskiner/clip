@@ -325,6 +325,38 @@ pub trait MonoProcessor {
         f32x8::new([y0[0], y0[1], y0[2], y0[3], y1[0], y1[1], y1[2], y1[3]])
     }
 
+    /// process two independent channels at once (can make use of frame-wide SIMD)
+    /// by mutating argument
+    ///
+    /// you may choose not to implement this if the process you are doing cannot
+    /// reasonably be expressed in dual mono
+    fn process_buffer_replacing_dual_mono(&mut self, x: &[&mut [f32]; 2]) {
+        unimplemented!();
+    }
+
+    /// process two independent channels at once (can make use of frame-wide SIMD)
+    /// by copying into a separate buffer
+    ////
+    /// you may choose not to implement this if the process you are doing cannot
+    /// reasonably be expressed in dual mono
+    fn process_buffer_non_replacing_dual_mono(&mut self, in_: &[&[f32]; 2], out: &[&mut [f32]; 2]) {
+        unimplemented!();
+    }
+
+    /// process by mutating argument
+    fn process_buffer_replacing(&mut self, x: &mut [f32]) {
+        for s in x {
+            *s = self.step(*s);
+        }
+    }
+
+    /// process into a separate buffer
+    fn process_buffer_non_replacing(&mut self, in_: &[f32], out: &mut [f32]) {
+        for (i, s) in in_.iter().enumerate() {
+            out[i] = self.step(*s);
+        }
+    }
+
     /// latency in fractions of samples. If you implement this, then `rounded_latency`
     /// is defined by default in terms of this.
     ///
@@ -720,14 +752,6 @@ impl MonoProcessor for NullProcessor {
         return 0.0;
     }
 
-    fn process_simd_4(&mut self, _x: f32x4) -> f32x4 {
-        f32x4::new([0.0, 0.0, 0.0, 0.0])
-    }
-
-    fn process_simd_8(&mut self, _x: f32x8) -> f32x8 {
-        f32x8::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    }
-
     fn reset(&mut self) {}
 
     fn initialize(&mut self) {}
@@ -738,14 +762,6 @@ pub struct IdentityProcessor();
 
 impl MonoProcessor for IdentityProcessor {
     fn step(&mut self, x: f32) -> f32 {
-        x
-    }
-
-    fn process_simd_4(&mut self, x: f32x4) -> f32x4 {
-        x
-    }
-
-    fn process_simd_8(&mut self, x: f32x8) -> f32x8 {
         x
     }
 

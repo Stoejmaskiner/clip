@@ -26,9 +26,10 @@ mod params;
 mod processors;
 mod widgets;
 
-/// size of each "batch" of samples taken from a channel at a time, independent
-/// of host's buffer size.
-const MAX_BLOCK_SIZE: usize = 64;
+/// max size of each batch, certain expensive calculations are only performed
+/// once per MAX_BLOCK_SIZE samples. For example, parameter smoothing is performed
+/// only at this resolution
+const MAX_BLOCK_SIZE: u32 = 8;
 
 /// hardcoded supported number of channels (basically every DAW immaginable
 /// supports stereo lmao)
@@ -63,12 +64,12 @@ pub struct Clip {
 
 impl Clip {
     fn param_update(&mut self) {
-        let pre_gain = self.params.pre_gain.smoothed.next();
-        let post_gain = self.params.post_gain.smoothed.next();
-        let hardness = self.params.hardness.smoothed.next();
-        let drive = self.params.drive.smoothed.next();
-        let threshold = self.params.threshold.smoothed.next();
-        let mix = self.params.mix.smoothed.next();
+        let pre_gain = self.params.pre_gain.smoothed.next_step(MAX_BLOCK_SIZE);
+        let post_gain = self.params.post_gain.smoothed.next_step(MAX_BLOCK_SIZE);
+        let hardness = self.params.hardness.smoothed.next_step(MAX_BLOCK_SIZE);
+        let drive = self.params.drive.smoothed.next_step(MAX_BLOCK_SIZE);
+        let threshold = self.params.threshold.smoothed.next_step(MAX_BLOCK_SIZE);
+        let mix = self.params.mix.smoothed.next_step(MAX_BLOCK_SIZE);
 
         for c in &mut self.clipper {
             let inner = &mut (*c).inner_processor;
@@ -119,34 +120,56 @@ impl Clip {
         self.plot.plot_processor(&mut self.clipper_4_viz);
     }
 
-    fn audio_update(&mut self, channel_samples: ChannelSamples) {
-        for (chan, sample) in channel_samples.into_iter().enumerate() {
-            // update input amp accumulator (running maximum)
-            {
-                let x = *sample;
-                self.in_amp_accumulator = self.in_amp_accumulator.max((x).abs());
-            }
+    fn audio_update(&mut self, stereo_slice: &mut [&mut [f32]; 2]) {
+        // update input amp accumulator (running maximum)
+        {
+            // max value of the entire stereo slice
+            // NOTE: theoretically the very first sample in the slice will not
+            //       be .abs(), but literally nobody is never going to notice
+            //       and also in_amp_accumulator is initialized at 0.0, so
+            //       it will be clipped to 0.0 anyway
+            let maybe_max = stereo_slice[0]
+                .iter()
+                .copied()
+                .reduce(|a, e| a.max((e).abs()))
+                .unwrap();
+            let maybe_max = maybe_max.max(
+                stereo_slice[1]
+                    .iter()
+                    .copied()
+                    .reduce(|a, e| a.max((e).abs()))
+                    .unwrap(),
+            );
+            self.in_amp_accumulator = self.in_amp_accumulator.max(maybe_max);
+        }
 
-            // maybe apply DC blocker
-            if self.params.dc_block.value() {
-                // let x = *sample;
-                let x = random::<f32>();
-                let y = self.dc_blocker[chan].step(x);
-                *sample = y;
-            }
+        // maybe apply DC blocker
+        if self.params.dc_block.value() {
+            self.dc_blocker[0].process_buffer_replacing(stereo_slice[0]);
+            self.dc_blocker[1].process_buffer_replacing(stereo_slice[1]);
+        }
 
-            // apply main distortion
-            {
-                let x = *sample;
-                let y = self.clipper[chan].step(x);
-                *sample = y;
-            }
+        // apply main distortion
+        {
+            self.clipper[0].process_buffer_replacing(stereo_slice[0]);
+            self.clipper[1].process_buffer_replacing(stereo_slice[1]);
+        }
 
-            // update output amp accumulator (running maximum)
-            {
-                let x = *sample;
-                self.out_amp_accumulator = self.out_amp_accumulator.max((x).abs());
-            }
+        // update output amp accumulator (running maximum)
+        {
+            let maybe_max = stereo_slice[0]
+                .iter()
+                .copied()
+                .reduce(|a, e| a.max((e).abs()))
+                .unwrap()
+                .max(
+                    stereo_slice[1]
+                        .iter()
+                        .copied()
+                        .reduce(|a, e| a.max((e).abs()))
+                        .unwrap(),
+                );
+            self.out_amp_accumulator = self.out_amp_accumulator.max(maybe_max);
         }
     }
 }
@@ -256,12 +279,16 @@ impl Plugin for Clip {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        for channel_samples in buffer.iter_samples() {
+        for (_, block) in buffer.iter_blocks(MAX_BLOCK_SIZE as usize) {
             self.param_update();
 
             if !self.params.bypass.value() {
-                self.audio_update(channel_samples);
-                //return ProcessStatus::Tail(256);
+                let mut block_channels = block.into_iter();
+                let stereo_slice = &mut [
+                    block_channels.next().unwrap(),
+                    block_channels.next().unwrap(),
+                ];
+                self.audio_update(stereo_slice);
             }
 
             if self.frame_counter.0 % self.gui_refresh_period == 0
@@ -269,7 +296,7 @@ impl Plugin for Clip {
             {
                 self.gui_update();
             }
-            self.frame_counter += 1;
+            self.frame_counter += MAX_BLOCK_SIZE as usize;
         }
         ProcessStatus::Tail(256)
     }

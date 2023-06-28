@@ -48,6 +48,11 @@ Slightly worse, not interesting.
 Also slightly worse, not interesting.
 
 
+## Optimization 2
+
+Before bufferization: ~2 ms
+
+
 ## Licensing
 
 Inherits the GPLv3 license from [NIH-plug](https://github.com/robbert-vdh/nih-plug), which in turn inherits it from the VST3 bindings.
