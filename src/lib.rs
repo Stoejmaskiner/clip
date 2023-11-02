@@ -50,7 +50,7 @@ pub struct Clip {
 
     // === processors ===
     dc_blocker: [dsp::DCBlock; NUM_CHANNELS],
-    clipper: [dsp::OversampleX4<processors::MainDistortionProcessor>; NUM_CHANNELS],
+    clipper: [dsp::FastOversampleX4<processors::MainDistortionProcessor>; NUM_CHANNELS],
     clipper_4_viz: processors::MainDistortionProcessor,
 
     // === config ===
@@ -182,7 +182,7 @@ impl Default for Clip {
             in_amp_accumulator: 0.0,
             out_amp_accumulator: 0.0,
             dc_blocker: array![dsp::DCBlock::default(); NUM_CHANNELS],
-            clipper: array![dsp::OversampleX4::new(processors::MainDistortionProcessor::new()); NUM_CHANNELS],
+            clipper: array![dsp::FastOversampleX4::new(processors::MainDistortionProcessor::new()); NUM_CHANNELS],
             peak_meter_decay_weight: 1.0,
             gui_refresh_period: 800,
             frame_counter: Wrapping(0),

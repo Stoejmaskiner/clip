@@ -50,7 +50,13 @@ Also slightly worse, not interesting.
 
 ## Optimization 2
 
+ALSA driver, sample rate 48kHz, 1024 buffer size (21.333 ms deadline)
+
 Before bufferization: ~2 ms
+
+Basic bufferization: ~1.8 ms
+
+Fast oversample: ~1.7 ms
 
 
 ## Licensing

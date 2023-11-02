@@ -1,0 +1,108 @@
+from __future__ import annotations
+from scipy.signal import ellip, zpk2tf, freqz, TransferFunction, lfilter
+from scipy.fft import rfft, rfftfreq
+import numpy as np
+import matplotlib.pyplot as plt
+from dataclasses import dataclass
+
+
+STOPBAND_RIPPLE_DB: float = 35.0
+ORDER: int = 5
+
+# ref:
+#     Miroslav Lutovac et. al.
+#     "Half-Band IIR Filter Design Using Matlab"
+#     Telecommunications and Electronics Institute Belgrade
+L = np.power(10.0, STOPBAND_RIPPLE_DB / 10.0) - 1.0
+aux = np.sqrt(np.sqrt(1.0 - 1.0 / L**2))
+numerator = 1.0 - aux
+denominator = 1.0 + aux
+t = numerator / denominator / 2
+q = t + 2.0 * t**5.0 + 15.0 * t**9.0 + 150.0 * t**13.0
+g = np.exp(np.log(q) / ORDER)
+q_0 = (g + g**9.0 + g**25.0 + g**49.0 + g**81.0 + g**121.0 + g**169.0) / (
+    1.0 + 2.0 * (g**4.0 + g**16.0 + g**36.0 + g**64.0 + g**100.0 + g**144.0)
+)
+xi = 1.0 / np.sqrt(1.0 - ((1.0 - 2.0 * q_0) / (1.0 + 2.0 * q_0)) ** 4.0)
+
+f_p = 1.0 / np.pi * np.arctan(1.0 / np.sqrt(xi))
+f_a = 0.5 - f_p
+a_a = STOPBAND_RIPPLE_DB
+a_p = 10.0 * np.log10(1.0 / (10.0 ** (a_a / 10.0) - 1.0) + 1.0)
+
+z, p, k = ellip(ORDER, a_p, a_a, f_p * 2.0, output="zpk")
+b, a = zpk2tf(z, p, k)
+
+print(p)
+
+w, h = freqz(b, a)
+plt.plot(w / np.pi, 20 * np.log10(abs(h)))
+plt.axvline(x=0.5)
+plt.axhline(y=-60)
+
+
+@dataclass
+class MyTransferFunction:
+    num: list
+    den: list
+
+    def __neg__(self):
+        return MyTransferFunction(-self.num, self.den)
+
+    def __mul__(self, other: int | float | MyTransferFunction):
+        if type(other) in [int, float]:
+            return MyTransferFunction([term * other for term in self.num], self.den)
+        return MyTransferFunction(
+            np.polymul(self.num, other.num), np.polymul(self.den, other.den)
+        )
+
+    def __truediv__(self, other: int | float | MyTransferFunction):
+        if type(other) in [int, float]:
+            return MyTransferFunction(self.num, [term * other for term in self.den])
+        return MyTransferFunction(
+            np.polymul(self.num, other.den), np.polymul(self.den, other.num)
+        )
+
+    def __add__(self, other):
+        num = np.polyadd(
+            np.polymul(self.num, other.den),
+            np.polymul(self.den, other.num),
+        )
+        den = np.polymul(self.den, other.den)
+        return MyTransferFunction(num, den)
+
+    def to_tf(self) -> TransferFunction:
+        return TransferFunction(self.num, self.den)
+
+
+beta = np.array(sorted([np.abs(pole) ** 2 for pole in p])[1::2])
+print(beta)
+
+# A0 = MyTransferFunction([beta[0], 0, 1], [1, 0, beta[0]]) * MyTransferFunction(
+#     [beta[2], 0, 1], [1, 0, beta[2]]
+# )
+# A1 = (
+#     MyTransferFunction([beta[1], 0, 1], [1, 0, beta[1]])
+#     * MyTransferFunction([beta[3], 0, 1], [1, 0, beta[3]])
+#     * MyTransferFunction([0, 1], [1])
+# )
+
+
+A0 = TransferFunction([beta[0], 0, 1], [1, 0, beta[0]])
+A1 = TransferFunction([0, beta[1], 0, 1], [1, 0, beta[1]])
+
+dirac = [1.0] + [0.0] * 1023
+filtered = lfilter(A0.num, A0.den, dirac)
+filtered += lfilter(A1.num, A0.den, dirac)
+filtered /= 2.0
+
+yf = rfft(filtered)
+xf = rfftfreq(len(filtered))
+
+print(A0)
+print(A1)
+
+plt.plot(xf * 2.0, 20 * np.log10(yf))
+plt.axvline(x=0.5)
+plt.axhline(y=-60)
+plt.show()

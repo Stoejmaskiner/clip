@@ -3,6 +3,7 @@ use num_traits::FromPrimitive;
 use wide::{f32x4, f32x8};
 
 // mod filter_coefficients;
+mod iir_filters;
 mod ring_buffer;
 use crate::filter_coefficients::LP_FIR_2X_TO_1X_MINIMUM;
 use crate::filter_coefficients::LP_FIR_2X_TO_1X_MINIMUM_LEN;
@@ -373,7 +374,11 @@ pub trait MonoProcessor {
     /// tail length in fractions of samples. If you implement this, then `rounded_tail`
     /// is defined by default in terms of this.
     ///
-    /// This tail length can usually be calculated in terms of the exact latency of
+    /// If tail length is finite, this should be the exact tail length, if it's infinite
+    /// it should be the length until the tail decays below the smallest normal f32
+    /// value.
+    ///
+    /// This tail length can usually be calculated in terms of the exact tail of
     /// inner processors.
     fn exact_tail(&self) -> f32 {
         0.0
